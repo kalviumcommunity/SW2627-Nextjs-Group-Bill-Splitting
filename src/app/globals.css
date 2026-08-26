@@ -1,0 +1,165 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-main: #f6f3eb;
+    --bg-surface: #ffffff;
+    --bg-card-subtle: #fbf9f4;
+    --text-primary: #0f0f12;
+    --text-secondary: #5e5c66;
+    --text-muted: #95939e;
+    --accent-gold: #c5a86a;
+    --accent-dark: #0f0f12;
+    --border-subtle: #e5e0d3;
+    --border-active: #0f0f12;
+  }
+
+  body {
+    background-color: var(--bg-main);
+    color: var(--text-primary);
+    font-family: var(--font-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+}
+
+/* Luxury Serif Typography */
+.font-serif-luxury {
+  font-family: var(--font-serif), "Cormorant Garamond", "Didot", "Bodoni MT", Georgia, serif;
+}
+
+/* Ambient Background Glows */
+.luxury-glow-1 {
+  position: absolute;
+  width: 500px;
+  height: 500px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(212, 192, 160, 0.35) 0%, rgba(246, 243, 235, 0) 70%);
+  filter: blur(60px);
+  pointer-events: none;
+  animation: pulseGlow 10s ease-in-out infinite alternate;
+}
+
+.luxury-glow-2 {
+  position: absolute;
+  width: 400px;
+  height: 400px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(197, 168, 106, 0.2) 0%, rgba(246, 243, 235, 0) 70%);
+  filter: blur(50px);
+  pointer-events: none;
+  animation: pulseGlow 8s ease-in-out infinite alternate-reverse;
+}
+
+/* Subtle dot-grid pattern for texture */
+.bg-grid-pattern {
+  background-image: radial-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Custom Input Field Styling */
+.cred-input-group {
+  position: relative;
+  width: 100%;
+}
+
+.cred-label {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #55535e;
+  margin-bottom: 0.4rem;
+  transition: color 0.2s ease;
+}
+
+.cred-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-bottom: 1.5px solid #dcd7ca;
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: 4px 4px 0 0;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.cred-input-wrapper:hover {
+  border-bottom-color: #9e9a8f;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.cred-input-wrapper.is-focused {
+  border-bottom-color: #0f0f12;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.05);
+}
+
+.cred-input-wrapper.has-error {
+  border-bottom-color: #d9383a;
+  background: rgba(254, 242, 242, 0.6);
+}
+
+.cred-input-field {
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 0.65rem 0.5rem;
+  font-size: 0.95rem;
+  color: #0f0f12;
+  outline: none;
+  font-family: inherit;
+  font-weight: 500;
+}
+
+.cred-input-field::placeholder {
+  color: #a4a095;
+  font-size: 0.88rem;
+  font-weight: 400;
+}
+
+/* Keyframe Animations */
+@keyframes pulseGlow {
+  0% {
+    transform: scale(0.95) translate(0, 0);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.08) translate(15px, -15px);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(0.95) translate(0, 0);
+    opacity: 0.6;
+  }
+}
+
+@keyframes floatCard {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+.animate-float {
+  animation: floatCard 6s ease-in-out infinite;
+}
+
+/* Glassmorphism Classes */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+}
+
+.glass-pill {
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(230, 225, 214, 0.8);
+}
