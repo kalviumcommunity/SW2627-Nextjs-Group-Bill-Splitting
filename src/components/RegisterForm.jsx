@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import OtpVerifyForm from "./OtpVerifyForm";
 
 export default function RegisterForm() {
@@ -374,12 +375,12 @@ export default function RegisterForm() {
           <div className="text-center">
             <p className="text-xs text-[#6c6a75]">
               Already a member?{" "}
-              <a
-                href="#login"
+              <Link
+                href="/login"
                 className="text-[#0f0f12] font-bold underline hover:text-[#38363f] transition-colors ml-1"
               >
                 Log in
-              </a>
+              </Link>
             </p>
           </div>
         </div>
