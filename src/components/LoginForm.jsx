@@ -189,16 +189,12 @@ export default function LoginForm() {
                 >
                   Password
                 </label>
-                <a
-                  href="#forgot-password"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    alert("Password recovery flow: Backend endpoint POST /api/auth/forgot-password will be called.");
-                  }}
+                <Link
+                  href="/forgot-password"
                   className="text-xs font-medium text-[#6c6a75] hover:text-[#121214] transition-colors cursor-pointer"
                 >
                   Forgot?
-                </a>
+                </Link>
               </div>
 
               <div
