@@ -19,17 +19,6 @@ export default function RegisterForm() {
   const [serverStatus, setServerStatus] = useState(null);
   const [showOtpScreen, setShowOtpScreen] = useState(false);
 
-  // Calculate password strength for visual feedback
-  const getPasswordStrength = () => {
-    const len = formData.password.length;
-    if (len === 0) return 0;
-    if (len < 6) return 1;
-    if (len < 10) return 2;
-    return 3;
-  };
-
-  const passwordStrength = getPasswordStrength();
-
   // Handle Input Changes
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -44,18 +33,24 @@ export default function RegisterForm() {
   const validateForm = () => {
     const newErrors = {};
 
-    if (!formData.fullName.trim()) {
+    // Full Name validation (min 3 chars, no special characters or numbers)
+    const trimmedName = formData.fullName.trim();
+    if (!trimmedName) {
       newErrors.fullName = "Full name is required";
-    } else if (formData.fullName.trim().length < 2) {
-      newErrors.fullName = "Please enter a valid full name";
+    } else if (trimmedName.length < 3) {
+      newErrors.fullName = "Full name must be at least 3 characters";
+    } else if (!/^[a-zA-Z\s]+$/.test(trimmedName)) {
+      newErrors.fullName = "Full name should not include special characters or numbers";
     }
 
+    // Email validation
     if (!formData.email.trim()) {
       newErrors.email = "Email address is required";
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email.trim())) {
       newErrors.email = "Please enter a valid email address";
     }
 
+    // Age validation
     if (!formData.age) {
       newErrors.age = "Age is required";
     } else {
@@ -67,10 +62,31 @@ export default function RegisterForm() {
       }
     }
 
-    if (!formData.password) {
+    // Password validation: min length 8, uppercase, lowercase, number, special character
+    const password = formData.password;
+    if (!password) {
       newErrors.password = "Password is required";
-    } else if (formData.password.length < 6) {
-      newErrors.password = "Password must be at least 6 characters";
+    } else {
+      const missing = [];
+      if (password.length < 8) {
+        missing.push("at least 8 characters");
+      }
+      if (!/[A-Z]/.test(password)) {
+        missing.push("1 uppercase letter");
+      }
+      if (!/[a-z]/.test(password)) {
+        missing.push("1 lowercase letter");
+      }
+      if (!/[0-9]/.test(password)) {
+        missing.push("1 number");
+      }
+      if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(password)) {
+        missing.push("1 special character");
+      }
+
+      if (missing.length > 0) {
+        newErrors.password = `Missing: ${missing.join(", ")}`;
+      }
     }
 
     setErrors(newErrors);
@@ -126,7 +142,6 @@ export default function RegisterForm() {
         email={formData.email}
         onBack={() => setShowOtpScreen(false)}
         onSuccess={() => {
-          // Callback after successful verification
           console.log("Account activated successfully for", formData.email);
         }}
       />
@@ -135,17 +150,16 @@ export default function RegisterForm() {
 
   return (
     <div className="flex flex-col justify-between w-full h-full p-6 sm:p-10 lg:p-14 xl:p-16">
+      {/* Centered Registration Card */}
       <div className="flex-1 flex items-center justify-center">
-        <div className="w-full max-w-[440px] bg-white rounded-3xl p-8 sm:p-10 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.06),0_0_1px_1px_rgba(0,0,0,0.03)] border border-[#ebe7dc] transition-all duration-300">
+        <div className="w-full max-w-[420px] bg-white rounded-none sm:rounded-lg p-8 sm:p-10 border border-[#ded8cc] shadow-[0_10px_30px_-15px_rgba(0,0,0,0.05)] transition-all duration-300">
+          
           {/* Header */}
           <div className="text-center mb-8">
-            <span className="inline-block text-[10px] font-bold tracking-[0.25em] text-[#938f9c] uppercase mb-1">
-              Member Registration
-            </span>
-            <h2 className="font-serif-luxury text-3xl sm:text-4xl font-bold tracking-tight text-[#0f0f12] mb-1.5">
+            <h2 className="font-serif-luxury text-3xl sm:text-4xl font-bold tracking-tight text-[#121214] mb-1">
               Create Account
             </h2>
-            <p className="text-xs sm:text-sm text-[#6c6a75] font-normal">
+            <p className="text-xs text-[#6c6a75] font-normal">
               Enter your details to register
             </p>
           </div>
@@ -153,28 +167,36 @@ export default function RegisterForm() {
           {/* Feedback Alert */}
           {serverStatus && (
             <div
-              className={`mb-6 p-4 rounded-xl text-xs font-medium border flex items-start gap-3 transition-all ${
+              className={`mb-6 p-3.5 rounded-lg text-xs font-medium border flex items-start gap-2.5 transition-all ${
                 serverStatus.type === "success"
                   ? "bg-[#f2faf4] text-[#14532d] border-[#bbf7d0]"
                   : "bg-[#fef2f2] text-[#991b1b] border-[#fecaca]"
               }`}
             >
-              <span className="text-base">{serverStatus.type === "success" ? "✓" : "⚠"}</span>
+              <span>{serverStatus.type === "success" ? "✓" : "⚠"}</span>
               <p className="flex-1 leading-relaxed">{serverStatus.message}</p>
             </div>
           )}
 
           {/* Registration Form */}
-          <form onSubmit={handleSubmit} className="space-y-5" noValidate>
-            {/* Full Name */}
-            <div className="cred-input-group">
-              <label htmlFor="fullName" className="cred-label">
-                Full Name
+          <form onSubmit={handleSubmit} className="space-y-6" noValidate>
+            
+            {/* FULL NAME */}
+            <div className="space-y-1">
+              <label
+                htmlFor="fullName"
+                className="block text-[10px] font-bold tracking-[0.15em] text-[#121214] uppercase"
+              >
+                FULL NAME
               </label>
               <div
-                className={`cred-input-wrapper ${
-                  focusedField === "fullName" ? "is-focused" : ""
-                } ${errors.fullName ? "has-error" : ""}`}
+                className={`border-b transition-colors ${
+                  errors.fullName
+                    ? "border-[#d9383a]"
+                    : focusedField === "fullName"
+                    ? "border-[#121214]"
+                    : "border-[#cfc9bc] hover:border-[#9e988c]"
+                }`}
               >
                 <input
                   id="fullName"
@@ -185,28 +207,36 @@ export default function RegisterForm() {
                   onChange={handleChange}
                   onFocus={() => setFocusedField("fullName")}
                   onBlur={() => setFocusedField(null)}
-                  className="cred-input-field"
+                  className="w-full py-2 text-sm text-[#121214] placeholder-[#aaa498] bg-transparent outline-none font-medium"
                   autoComplete="name"
                   disabled={isSubmitting}
                 />
               </div>
               {errors.fullName && (
-                <span className="text-[11px] font-medium text-[#d9383a] mt-1 block">
+                <span className="text-[10px] font-medium text-[#d9383a] mt-0.5 block">
                   {errors.fullName}
                 </span>
               )}
             </div>
 
-            {/* Email Address & Age (Dual Column) */}
-            <div className="grid grid-cols-3 gap-3.5">
-              <div className="col-span-2 cred-input-group">
-                <label htmlFor="email" className="cred-label">
-                  Email Address
+            {/* EMAIL ADDRESS & AGE (Dual Column) */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-3">
+              {/* EMAIL ADDRESS */}
+              <div className="sm:col-span-2 space-y-1">
+                <label
+                  htmlFor="email"
+                  className="block text-[10px] font-bold tracking-[0.15em] text-[#121214] uppercase"
+                >
+                  EMAIL ADDRESS
                 </label>
                 <div
-                  className={`cred-input-wrapper ${
-                    focusedField === "email" ? "is-focused" : ""
-                  } ${errors.email ? "has-error" : ""}`}
+                  className={`border-b transition-colors ${
+                    errors.email
+                      ? "border-[#d9383a]"
+                      : focusedField === "email"
+                      ? "border-[#121214]"
+                      : "border-[#cfc9bc] hover:border-[#9e988c]"
+                  }`}
                 >
                   <input
                     id="email"
@@ -217,26 +247,34 @@ export default function RegisterForm() {
                     onChange={handleChange}
                     onFocus={() => setFocusedField("email")}
                     onBlur={() => setFocusedField(null)}
-                    className="cred-input-field"
+                    className="w-full py-2 text-sm text-[#121214] placeholder-[#aaa498] bg-transparent outline-none font-medium"
                     autoComplete="email"
                     disabled={isSubmitting}
                   />
                 </div>
                 {errors.email && (
-                  <span className="text-[11px] font-medium text-[#d9383a] mt-1 block">
+                  <span className="text-[10px] font-medium text-[#d9383a] mt-0.5 block">
                     {errors.email}
                   </span>
                 )}
               </div>
 
-              <div className="col-span-1 cred-input-group">
-                <label htmlFor="age" className="cred-label">
-                  Age
+              {/* AGE */}
+              <div className="sm:col-span-1 space-y-1">
+                <label
+                  htmlFor="age"
+                  className="block text-[10px] font-bold tracking-[0.15em] text-[#121214] uppercase"
+                >
+                  AGE
                 </label>
                 <div
-                  className={`cred-input-wrapper ${
-                    focusedField === "age" ? "is-focused" : ""
-                  } ${errors.age ? "has-error" : ""}`}
+                  className={`border-b transition-colors ${
+                    errors.age
+                      ? "border-[#d9383a]"
+                      : focusedField === "age"
+                      ? "border-[#121214]"
+                      : "border-[#cfc9bc] hover:border-[#9e988c]"
+                  }`}
                 >
                   <input
                     id="age"
@@ -249,54 +287,35 @@ export default function RegisterForm() {
                     onChange={handleChange}
                     onFocus={() => setFocusedField("age")}
                     onBlur={() => setFocusedField(null)}
-                    className="cred-input-field"
+                    className="w-full py-2 text-sm text-[#121214] placeholder-[#aaa498] bg-transparent outline-none font-medium"
                     disabled={isSubmitting}
                   />
                 </div>
                 {errors.age && (
-                  <span className="text-[11px] font-medium text-[#d9383a] mt-1 block">
+                  <span className="text-[10px] font-medium text-[#d9383a] mt-0.5 block">
                     {errors.age}
                   </span>
                 )}
               </div>
             </div>
 
-            {/* Password */}
-            <div className="cred-input-group">
-              <div className="flex items-center justify-between mb-1">
-                <label htmlFor="password" className="cred-label mb-0">
-                  Password
-                </label>
-                {/* Password Strength Indicator */}
-                {formData.password.length > 0 && (
-                  <div className="flex items-center gap-1">
-                    <span className="text-[10px] text-[#787582] mr-1">
-                      {passwordStrength === 1 && "Weak"}
-                      {passwordStrength === 2 && "Good"}
-                      {passwordStrength === 3 && "Strong"}
-                    </span>
-                    <span
-                      className={`w-3 h-1 rounded-full ${
-                        passwordStrength >= 1 ? "bg-[#d9383a]" : "bg-[#ece8de]"
-                      }`}
-                    />
-                    <span
-                      className={`w-3 h-1 rounded-full ${
-                        passwordStrength >= 2 ? "bg-[#eab308]" : "bg-[#ece8de]"
-                      }`}
-                    />
-                    <span
-                      className={`w-3 h-1 rounded-full ${
-                        passwordStrength >= 3 ? "bg-[#18794e]" : "bg-[#ece8de]"
-                      }`}
-                    />
-                  </div>
-                )}
-              </div>
+            {/* PASSWORD */}
+            <div className="space-y-1">
+              <label
+                htmlFor="password"
+                className="block text-[10px] font-bold tracking-[0.15em] text-[#121214] uppercase"
+              >
+                PASSWORD
+              </label>
+
               <div
-                className={`cred-input-wrapper ${
-                  focusedField === "password" ? "is-focused" : ""
-                } ${errors.password ? "has-error" : ""}`}
+                className={`relative border-b transition-colors ${
+                  errors.password
+                    ? "border-[#d9383a]"
+                    : focusedField === "password"
+                    ? "border-[#121214]"
+                    : "border-[#cfc9bc] hover:border-[#9e988c]"
+                }`}
               >
                 <input
                   id="password"
@@ -307,69 +326,112 @@ export default function RegisterForm() {
                   onChange={handleChange}
                   onFocus={() => setFocusedField("password")}
                   onBlur={() => setFocusedField(null)}
-                  className="cred-input-field pr-12"
+                  className="w-full py-2 pr-8 text-sm text-[#121214] placeholder-[#aaa498] bg-transparent outline-none font-medium"
                   autoComplete="new-password"
                   disabled={isSubmitting}
                 />
+                
+                {/* Eye Icon Visibility Toggle */}
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="px-3 text-[10px] font-bold tracking-widest text-[#787582] hover:text-[#0f0f12] transition-colors focus:outline-none cursor-pointer select-none"
+                  className="absolute right-0 top-1/2 -translate-y-1/2 text-[#787582] hover:text-[#121214] transition-colors focus:outline-none cursor-pointer p-1"
                   aria-label={showPassword ? "Hide password" : "Show password"}
+                  title={showPassword ? "Hide password" : "Show password"}
                 >
-                  {showPassword ? "HIDE" : "SHOW"}
+                  {showPassword ? (
+                    /* Eye Slashed (Hide) */
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      strokeWidth={1.5}
+                      stroke="currentColor"
+                      className="w-4 h-4"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88"
+                      />
+                    </svg>
+                  ) : (
+                    /* Eye Open (Show) */
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      strokeWidth={1.5}
+                      stroke="currentColor"
+                      className="w-4 h-4"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z"
+                      />
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                      />
+                    </svg>
+                  )}
                 </button>
               </div>
+
               {errors.password && (
-                <span className="text-[11px] font-medium text-[#d9383a] mt-1 block">
+                <span className="text-[10px] font-medium text-[#d9383a] mt-0.5 block leading-tight">
                   {errors.password}
                 </span>
               )}
             </div>
 
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="group relative w-full mt-7 bg-[#0f0f12] text-white hover:bg-[#25242b] active:scale-[0.99] transition-all duration-300 py-4 px-6 rounded-xl font-bold text-xs tracking-[0.2em] uppercase flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed shadow-[0_10px_20px_-5px_rgba(15,15,18,0.3)] hover:shadow-[0_15px_25px_-5px_rgba(15,15,18,0.4)]"
-            >
-              {isSubmitting ? (
-                <span className="inline-flex items-center gap-2">
-                  <svg
-                    className="animate-spin h-4 w-4 text-white"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    />
-                  </svg>
-                  CREATING ACCOUNT...
-                </span>
-              ) : (
-                <>
-                  <span>CONTINUE</span>
-                  <span className="text-sm font-light transition-transform duration-300 group-hover:translate-x-1">
-                    →
+            {/* Primary Action Button (CONTINUE →) */}
+            <div className="pt-2">
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="group relative w-full bg-[#121214] text-white hover:bg-[#25242b] active:scale-[0.99] transition-all duration-300 py-3.5 px-6 rounded-md font-bold text-xs tracking-[0.18em] uppercase flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed shadow-[0_8px_16px_-4px_rgba(15,15,18,0.25)] hover:shadow-[0_12px_20px_-4px_rgba(15,15,18,0.35)]"
+              >
+                {isSubmitting ? (
+                  <span className="inline-flex items-center gap-2">
+                    <svg
+                      className="animate-spin h-4 w-4 text-white"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      />
+                    </svg>
+                    CREATING ACCOUNT...
                   </span>
-                </>
-              )}
-            </button>
+                ) : (
+                  <>
+                    <span>CONTINUE</span>
+                    <span className="text-sm font-light transition-transform duration-300 group-hover:translate-x-1">
+                      →
+                    </span>
+                  </>
+                )}
+              </button>
+            </div>
           </form>
 
           {/* Divider */}
-          <div className="border-t border-[#f0ece2] my-6" />
+          <div className="border-t border-[#e8e4da] my-6" />
 
           {/* Switch to Login Link */}
           <div className="text-center">
@@ -377,7 +439,7 @@ export default function RegisterForm() {
               Already a member?{" "}
               <Link
                 href="/login"
-                className="text-[#0f0f12] font-bold underline hover:text-[#38363f] transition-colors ml-1"
+                className="text-[#121214] font-bold underline hover:text-[#38363f] transition-colors ml-1"
               >
                 Log in
               </Link>
@@ -389,7 +451,7 @@ export default function RegisterForm() {
       {/* Footer Branding Note */}
       <div className="text-center pt-6">
         <p className="text-[10px] tracking-[0.2em] font-semibold text-[#9e9a8f] uppercase">
-          © {new Date().getFullYear()} CRED SPLIT. HIGH-END FINANCIAL EXPERIENCE.
+          © 2024 CRED SPLIT. HIGH-END FINANCIAL EXPERIENCE.
         </p>
       </div>
     </div>
