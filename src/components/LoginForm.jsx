@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 export default function LoginForm() {
+  const router = useRouter();
   const [formData, setFormData] = useState({
     email: "",
     password: "",
@@ -100,6 +102,11 @@ export default function LoginForm() {
         type: "success",
         message: "Welcome back! Redirecting to your dashboard...",
       });
+
+      // Redirect to home dashboard
+      setTimeout(() => {
+        router.push("/dashboard");
+      }, 500);
     } catch (err) {
       setServerStatus({
         type: "error",
