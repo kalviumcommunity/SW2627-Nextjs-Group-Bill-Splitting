@@ -39,3 +39,29 @@ export function validateRegistrationInput(data) {
     },
   };
 }
+
+export function validateLoginInput(data) {
+  const errors = {};
+
+  const email = data.email?.trim().toLowerCase();
+  const password = data.password;
+
+  if (!email) {
+    errors.email = "Email is required";
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    errors.email = "Invalid email address";
+  }
+
+  if (!password) {
+    errors.password = "Password is required";
+  }
+
+  return {
+    isValid: Object.keys(errors).length === 0,
+    errors,
+    data: {
+      email,
+      password,
+    },
+  };
+}
