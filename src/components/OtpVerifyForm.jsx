@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 
 export default function OtpVerifyForm({
   email = "name@domain.com",
   onBack,
   onSuccess,
 }) {
+  const router = useRouter();
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [isVerifying, setIsVerifying] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -165,6 +167,10 @@ export default function OtpVerifyForm({
       if (onSuccess) {
         onSuccess();
       }
+      // Redirect to dashboard
+      setTimeout(() => {
+        router.push("/dashboard");
+      }, 600);
     } catch (err) {
       setErrorMessage("Invalid verification code. Please try again.");
     } finally {
