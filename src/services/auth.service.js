@@ -1,5 +1,8 @@
-import { hashPassword } from "../utils/password.js";
-import { validateRegistrationInput } from "../utils/auth.validation.js";
+import { hashPassword, comparePassword } from "../utils/password.js";
+import {
+  validateRegistrationInput,
+  validateLoginInput,
+} from "../utils/auth.validation.js";
 
 export async function registerUser(data, prisma) {
   const validation = validateRegistrationInput(data);
@@ -50,5 +53,57 @@ export async function registerUser(data, prisma) {
     status: 201,
     message: "Registration successful",
     user,
+  };
+}
+
+export async function loginUser(data, prisma) {
+  const validation = validateLoginInput(data);
+
+  if (!validation.isValid) {
+    return {
+      success: false,
+      status: 400,
+      errors: validation.errors,
+    };
+  }
+
+  const { email, password } = validation.data;
+
+  const user = await prisma.user.findUnique({
+    where: { email },
+  });
+
+  if (!user) {
+    return {
+      success: false,
+      status: 401,
+      message: "Invalid email or password",
+    };
+  }
+
+  const passwordMatches = await comparePassword(
+    password,
+    user.passwordHash
+  );
+
+  if (!passwordMatches) {
+    return {
+      success: false,
+      status: 401,
+      message: "Invalid email or password",
+    };
+  }
+
+  return {
+    success: true,
+    status: 200,
+    message: "Login successful",
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      age: user.age,
+      emailVerified: user.emailVerified,
+    },
   };
 }
