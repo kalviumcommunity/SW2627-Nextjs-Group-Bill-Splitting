@@ -65,3 +65,29 @@ export function validateLoginInput(data) {
     },
   };
 }
+
+export function validateOtpInput(data) {
+  const errors = {};
+
+  const userId = data.userId?.trim();
+  const otp = data.otp?.trim();
+
+  if (!userId) {
+    errors.userId = "User ID is required";
+  }
+
+  if (!otp) {
+    errors.otp = "OTP is required";
+  } else if (!/^\d{6}$/.test(otp)) {
+    errors.otp = "OTP must be 6 digits";
+  }
+
+  return {
+    isValid: Object.keys(errors).length === 0,
+    errors,
+    data: {
+      userId,
+      otp,
+    },
+  };
+}
