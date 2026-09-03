@@ -4,33 +4,30 @@ export function validateExpenseInput(data) {
   const totalAmount = Number(data.totalAmount);
   const deadline = data.deadline;
   const members = data.members;
+  const splitType = data.splitType;
 
-  // Total amount
-  if (data.totalAmount === undefined || data.totalAmount === null || data.totalAmount === "") {
+  if (
+    data.totalAmount === undefined ||
+    data.totalAmount === null ||
+    data.totalAmount === ""
+  ) {
     errors.totalAmount = "Total amount is required";
   } else if (Number.isNaN(totalAmount) || totalAmount <= 0) {
     errors.totalAmount = "Total amount must be greater than 0";
   }
 
-  // Deadline
   if (!deadline) {
     errors.deadline = "Deadline is required";
   } else if (Number.isNaN(new Date(deadline).getTime())) {
     errors.deadline = "Invalid deadline";
   }
 
-  // Members
   if (!Array.isArray(members) || members.length === 0) {
     errors.members = "At least one member is required";
-  } else {
-    const assignedTotal = members.reduce(
-      (sum, member) => sum + Number(member.assignedAmount),
-      0
-    );
-
-    if (members.some((member) => !member.userId)) {
-      errors.members = "Every member must have a user ID";
-    } else if (
+  } else if (members.some((member) => !member.userId)) {
+    errors.members = "Every member must have a user ID";
+  } else if (splitType === "MANUAL") {
+    if (
       members.some(
         (member) =>
           Number.isNaN(Number(member.assignedAmount)) ||
@@ -38,8 +35,15 @@ export function validateExpenseInput(data) {
       )
     ) {
       errors.members = "Every assigned amount must be greater than 0";
-    } else if (assignedTotal !== totalAmount) {
-      errors.members = "Assigned amounts must equal the total amount";
+    } else {
+      const assignedTotal = members.reduce(
+        (sum, member) => sum + Number(member.assignedAmount),
+        0
+      );
+
+      if (assignedTotal !== totalAmount) {
+        errors.members = "Assigned amounts must equal the total amount";
+      }
     }
   }
 
