@@ -1,4 +1,5 @@
 import { validateExpenseInput } from "../utils/expense.validation.js";
+import { calculateExpenseSplit } from "./expense-split.service.js";
 
 export async function createExpense(data, prisma) {
   const validation = validateExpenseInput(data);
@@ -13,14 +14,23 @@ export async function createExpense(data, prisma) {
 
   const { totalAmount, deadline, members } = validation.data;
 
-  // Create the expense and its members together.
+  const split = calculateExpenseSplit({
+    totalAmount,
+    splitType: data.splitType,
+    members,
+  });
+
+  if (!split.success) {
+    return split;
+  }
+
   const expense = await prisma.expense.create({
     data: {
       creatorId: data.creatorId,
       totalAmount,
       deadline,
       members: {
-        create: members.map((member) => ({
+        create: split.members.map((member) => ({
           userId: member.userId,
           assignedAmount: member.assignedAmount,
         })),
