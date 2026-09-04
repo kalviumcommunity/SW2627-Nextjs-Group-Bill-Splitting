@@ -218,14 +218,9 @@ export default function HomeDashboard({ initialUser = null }) {
             </button>
 
             {/* Creator Dashboard */}
-            <button
-              type="button"
-              onClick={() => setActiveTab("creator")}
-              className={`w-full flex items-center justify-between py-1.5 text-sm font-medium transition-colors text-left cursor-pointer ${
-                activeTab === "creator"
-                  ? "text-[#121214] font-bold"
-                  : "text-[#6c685f] hover:text-[#121214]"
-              }`}
+            <Link
+              href="/creator"
+              className="w-full flex items-center justify-between py-1.5 text-sm font-medium text-[#6c685f] hover:text-[#121214] transition-colors"
             >
               <div className="flex items-center gap-3">
                 <svg
@@ -244,10 +239,7 @@ export default function HomeDashboard({ initialUser = null }) {
                 </svg>
                 <span>Creator Dashboard</span>
               </div>
-              {activeTab === "creator" && (
-                <div className="w-[2px] h-6 bg-[#121214] -mr-6 sm:-mr-8" />
-              )}
-            </button>
+            </Link>
 
             {/* Payer Dashboard */}
             <button
@@ -360,8 +352,11 @@ export default function HomeDashboard({ initialUser = null }) {
              ─────────────────────────────────────────────────────────── */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             
-            {/* CARD 1: Creator Dashboard */}
-            <div className="bg-white rounded-3xl p-8 border border-[#dfd7c8] shadow-[0_10px_30px_-15px_rgba(40,30,15,0.03)] hover:shadow-[0_20px_45px_-15px_rgba(40,30,15,0.08)] hover:-translate-y-1 transition-all duration-300 flex flex-col justify-between">
+            {/* CARD 1: Creator Dashboard (Entire card clickable) */}
+            <Link
+              href="/creator"
+              className="group bg-white rounded-3xl p-8 border border-[#dfd7c8] shadow-[0_10px_30px_-15px_rgba(40,30,15,0.03)] hover:shadow-[0_20px_45px_-15px_rgba(40,30,15,0.08)] hover:-translate-y-1 transition-all duration-300 flex flex-col justify-between cursor-pointer"
+            >
               <div>
                 {/* Rounded Square Icon Container */}
                 <div className="w-12 h-12 rounded-2xl bg-[#f5ede2] border border-[#e5d8c3] flex items-center justify-center text-[#7a3b1d]">
@@ -392,16 +387,9 @@ export default function HomeDashboard({ initialUser = null }) {
 
               {/* Bottom Row */}
               <div className="flex items-center justify-between gap-3">
-                <Link
-                  href="#creator-splits"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setActiveTab("creator");
-                  }}
-                  className="text-xs font-bold text-[#8a3d1c] underline underline-offset-4 hover:opacity-80 transition-opacity"
-                >
+                <span className="text-xs font-bold text-[#8a3d1c] underline underline-offset-4 group-hover:opacity-80 transition-opacity">
                   Create &amp; Manage Splits →
-                </Link>
+                </span>
 
                 {/* Metric Boxes */}
                 <div className="flex items-center gap-2">
@@ -424,7 +412,7 @@ export default function HomeDashboard({ initialUser = null }) {
                   </div>
                 </div>
               </div>
-            </div>
+            </Link>
 
             {/* CARD 2: Payer Dashboard */}
             <div className="bg-white rounded-3xl p-8 border border-[#dfd7c8] shadow-[0_10px_30px_-15px_rgba(40,30,15,0.03)] hover:shadow-[0_20px_45px_-15px_rgba(40,30,15,0.08)] hover:-translate-y-1 transition-all duration-300 flex flex-col justify-between">
