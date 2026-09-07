@@ -256,8 +256,8 @@ export default function CreatorDashboard({
 
             {/* Payer Dashboard */}
             <Link
-              href="#payer"
-              className="w-full flex items-center justify-between py-1.5 text-sm font-medium text-[#6c685f] hover:text-[#121214] transition-colors"
+              href="/payer"
+              className="w-full flex items-center justify-between py-1.5 text-sm font-medium text-[#6c685f] hover:text-[#121214] transition-colors cursor-pointer"
             >
               <div className="flex items-center gap-3">
                 <svg
