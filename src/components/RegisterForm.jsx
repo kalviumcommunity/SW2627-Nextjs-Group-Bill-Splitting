@@ -18,6 +18,7 @@ export default function RegisterForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [serverStatus, setServerStatus] = useState(null);
   const [showOtpScreen, setShowOtpScreen] = useState(false);
+  const [registrationUserId, setRegistrationUserId] = useState("");
 
   // Handle Input Changes
   const handleChange = (e) => {
@@ -122,13 +123,27 @@ export default function RegisterForm() {
      */
 
     try {
-      // Simulate backend registration call and transition to OTP verification
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      const response = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...formData,
+          age: Number(formData.age),
+        }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        setErrors(result.errors || {});
+        throw new Error(result.message || "Unable to register");
+      }
+
+      setRegistrationUserId(result.userId);
       setShowOtpScreen(true);
     } catch (err) {
       setServerStatus({
         type: "error",
-        message: "Failed to submit registration. Please try again.",
+        message: err.message || "Failed to submit registration. Please try again.",
       });
     } finally {
       setIsSubmitting(false);
@@ -140,6 +155,7 @@ export default function RegisterForm() {
     return (
       <OtpVerifyForm
         email={formData.email}
+        userId={registrationUserId}
         onBack={() => setShowOtpScreen(false)}
         onSuccess={() => {
           console.log("Account activated successfully for", formData.email);

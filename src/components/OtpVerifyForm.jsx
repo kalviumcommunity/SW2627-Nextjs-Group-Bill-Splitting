@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 export default function OtpVerifyForm({
   email = "name@domain.com",
+  userId = "",
   onBack,
   onSuccess,
 }) {
@@ -14,7 +15,7 @@ export default function OtpVerifyForm({
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [countdown, setCountdown] = useState(58);
-  const [canResend, setCanResend] = useState(false);
+  const canResend = countdown === 0;
 
   const inputRefs = useRef([]);
 
@@ -30,8 +31,6 @@ export default function OtpVerifyForm({
     if (countdown > 0) {
       const timer = setTimeout(() => setCountdown((prev) => prev - 1), 1000);
       return () => clearTimeout(timer);
-    } else {
-      setCanResend(true);
     }
   }, [countdown]);
 
@@ -100,23 +99,24 @@ export default function OtpVerifyForm({
   const handleResendOtp = async () => {
     if (!canResend) return;
 
-    setCanResend(false);
     setCountdown(60);
     setErrorMessage("");
-    setSuccessMessage(`A new 6-digit code has been dispatched to ${email}`);
+    try {
+      const response = await fetch("/api/auth/resend-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, email }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "Unable to resend OTP");
 
-    // Clear OTP inputs
-    setOtp(["", "", "", "", "", ""]);
-    inputRefs.current[0]?.focus();
-
-    /*
-     * BACKEND CONTRACT (PRD Section 8.1 - OTP Resend):
-     * Request: POST /api/auth/resend-otp { email }
-     * Expects: { success: true, message: "New OTP sent" }
-     */
-    setTimeout(() => {
-      setSuccessMessage("");
-    }, 4000);
+      setSuccessMessage(result.message);
+      setOtp(["", "", "", "", "", ""]);
+      inputRefs.current[0]?.focus();
+    } catch (error) {
+      setCountdown(0);
+      setErrorMessage(error.message);
+    }
   };
 
   // Verify OTP Submission
@@ -160,10 +160,15 @@ export default function OtpVerifyForm({
      */
 
     try {
-      // Simulate backend OTP verification network call
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      const response = await fetch("/api/auth/verify-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, email, otp: enteredCode }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "Invalid verification code");
 
-      setSuccessMessage("Account verified successfully! Welcome to CRED Split.");
+      setSuccessMessage(result.message || "Account verified successfully! Welcome to CRED Split.");
       if (onSuccess) {
         onSuccess();
       }
@@ -172,7 +177,7 @@ export default function OtpVerifyForm({
         router.push("/dashboard");
       }, 600);
     } catch (err) {
-      setErrorMessage("Invalid verification code. Please try again.");
+      setErrorMessage(err.message || "Invalid verification code. Please try again.");
     } finally {
       setIsVerifying(false);
     }
