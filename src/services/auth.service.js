@@ -94,6 +94,15 @@ export async function loginUser(data, prisma) {
     };
   }
 
+  if (!user.emailVerified) {
+    return {
+      success: false,
+      status: 403,
+      needsVerification: true,
+      message: "Please verify your email before logging in",
+    };
+  }
+
   return {
     success: true,
     status: 200,

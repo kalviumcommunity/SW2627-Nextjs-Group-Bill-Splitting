@@ -70,10 +70,11 @@ export function validateOtpInput(data) {
   const errors = {};
 
   const userId = data.userId?.trim();
+  const email = data.email?.trim().toLowerCase();
   const otp = data.otp?.trim();
 
-  if (!userId) {
-    errors.userId = "User ID is required";
+  if (!userId && !email) {
+    errors.userId = "User ID or email is required";
   }
 
   if (!otp) {
@@ -87,6 +88,7 @@ export function validateOtpInput(data) {
     errors,
     data: {
       userId,
+      email,
       otp,
     },
   };

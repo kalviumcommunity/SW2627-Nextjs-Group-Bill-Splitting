@@ -92,6 +92,11 @@ export async function verifyOtp(userId, otp, prisma) {
     },
   });
 
+  await prisma.user.update({
+    where: { id: userId },
+    data: { emailVerified: true },
+  });
+
   return {
     success: true,
     status: 200,

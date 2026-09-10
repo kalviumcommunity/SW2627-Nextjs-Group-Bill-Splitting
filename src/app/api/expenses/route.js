@@ -1,4 +1,4 @@
-import { validateExpenseInput } from "../../../../utils/expense.validation";
+import { validateExpenseInput } from "../../../utils/expense.validation.js";
 
 export async function POST(request) {
   try {

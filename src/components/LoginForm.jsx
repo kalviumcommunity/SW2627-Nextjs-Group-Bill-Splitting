@@ -95,12 +95,21 @@ export default function LoginForm() {
      */
 
     try {
-      // Simulate backend network round-trip for frontend preview
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formData),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        setErrors(result.errors || {});
+        throw new Error(result.message || "Unable to authenticate");
+      }
 
       setServerStatus({
         type: "success",
-        message: "Welcome back! Redirecting to your dashboard...",
+        message: result.message || "Welcome back! Redirecting to your dashboard...",
       });
 
       // Redirect to home dashboard

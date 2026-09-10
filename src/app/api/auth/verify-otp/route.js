@@ -1,5 +1,6 @@
 import { verifyOtp } from "../../../../services/otp.service";
 import { validateOtpInput } from "../../../../utils/auth.validation";
+import { prisma } from "../../../../lib/prisma";
 
 export async function POST(request) {
   try {
@@ -17,13 +18,22 @@ export async function POST(request) {
       );
     }
 
-    return Response.json(
-      {
-        success: false,
-        message: "Database connection is not configured yet",
-      },
-      { status: 503 }
-    );
+    const { userId, email, otp } = validation.data;
+    let resolvedUserId = userId;
+
+    if (!resolvedUserId) {
+      const user = await prisma.user.findUnique({ where: { email } });
+      if (!user) {
+        return Response.json(
+          { success: false, message: "Unable to verify this account" },
+          { status: 400 }
+        );
+      }
+      resolvedUserId = user.id;
+    }
+
+    const result = await verifyOtp(resolvedUserId, otp, prisma);
+    return Response.json(result, { status: result.status });
   } catch (error) {
     console.error("OTP verification API error:", error);
 
