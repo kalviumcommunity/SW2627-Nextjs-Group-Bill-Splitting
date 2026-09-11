@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { createContribution } from "../../../../services/contribution.service.js";
 
 export async function POST(request) {
@@ -10,14 +11,14 @@ export async function POST(request) {
 
     const result = await createContribution(body, prisma);
 
-    return Response.json(
+    return NextResponse.json(
       result,
       { status: result.status }
     );
   } catch (error) {
     console.error("Contribution creation error:", error);
 
-    return Response.json(
+    return NextResponse.json(
       {
         success: false,
         status: 500,

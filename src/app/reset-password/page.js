@@ -3,21 +3,21 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import LeftBranding from "@/components/LeftBranding";
-import OtpVerifyForm from "@/components/OtpVerifyForm";
+import ResetPasswordForm from "@/components/ResetPasswordForm";
 
-export default function VerifyOtpPage() {
+export default function ResetPasswordPage() {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [email, setEmail] = useState("");
   const [userId, setUserId] = useState("");
 
-  // Guard: read from sessionStorage, redirect to /register if no email or userId found
+  // Guard: read from sessionStorage, redirect to /forgot-password if no email or userId found
   useEffect(() => {
-    const storedEmail = typeof window !== "undefined" ? sessionStorage.getItem("auth_verify_email") : null;
-    const storedUserId = typeof window !== "undefined" ? sessionStorage.getItem("auth_verify_userId") : null;
+    const storedEmail = typeof window !== "undefined" ? sessionStorage.getItem("reset_password_email") : null;
+    const storedUserId = typeof window !== "undefined" ? sessionStorage.getItem("reset_password_userId") : null;
 
     if (!storedEmail && !storedUserId) {
-      router.replace("/register");
+      router.replace("/forgot-password");
     } else {
       setEmail(storedEmail || "");
       setUserId(storedUserId || "");
@@ -25,7 +25,6 @@ export default function VerifyOtpPage() {
     }
   }, [router]);
 
-  // Don't render until mounted & validated
   if (!mounted || (!email && !userId)) {
     return (
       <div className="min-h-screen w-full flex items-center justify-center bg-[#f6f3eb]">
@@ -34,34 +33,25 @@ export default function VerifyOtpPage() {
     );
   }
 
-  const handleBack = () => {
-    if (typeof window !== "undefined") {
-      sessionStorage.removeItem("auth_verify_email");
-      sessionStorage.removeItem("auth_verify_userId");
-    }
-    router.push("/register");
-  };
-
   const handleSuccess = () => {
     if (typeof window !== "undefined") {
-      sessionStorage.removeItem("auth_verify_email");
-      sessionStorage.removeItem("auth_verify_userId");
+      sessionStorage.removeItem("reset_password_email");
+      sessionStorage.removeItem("reset_password_userId");
     }
   };
 
   return (
     <main className="min-h-screen w-full flex flex-col lg:flex-row bg-[#f6f3eb] text-[#0f0f12]">
-      {/* Left Section: CRED Split Identity, Remark & Live Bill Split Showcase */}
+      {/* Left Section */}
       <section className="w-full lg:w-1/2 flex items-center justify-center border-b lg:border-b-0 lg:border-r border-[#e6e1d4] relative">
         <LeftBranding />
       </section>
 
-      {/* Right Section: OTP Verification Form Card */}
+      {/* Right Section: Reset Password Form */}
       <section className="w-full lg:w-1/2 flex items-center justify-center bg-[#faf8f4] relative">
-        <OtpVerifyForm
+        <ResetPasswordForm
           email={email}
           userId={userId}
-          onBack={handleBack}
           onSuccess={handleSuccess}
         />
       </section>

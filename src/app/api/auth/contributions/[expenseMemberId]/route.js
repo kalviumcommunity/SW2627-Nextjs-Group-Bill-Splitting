@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { getContributionHistory } from "../../../../../services/contribution-history.service.js";
 
 export async function GET(request, { params }) {
@@ -11,13 +12,13 @@ export async function GET(request, { params }) {
       prisma
     );
 
-    return Response.json(result, {
+    return NextResponse.json(result, {
       status: result.status,
     });
   } catch (error) {
     console.error("Contribution history error:", error);
 
-    return Response.json(
+    return NextResponse.json(
       {
         success: false,
         status: 500,

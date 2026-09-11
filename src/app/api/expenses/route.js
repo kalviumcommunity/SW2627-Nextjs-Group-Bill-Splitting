@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { validateExpenseInput } from "../../../utils/expense.validation.js";
 
 export async function POST(request) {
@@ -7,7 +8,7 @@ export async function POST(request) {
     const validation = validateExpenseInput(body);
 
     if (!validation.isValid) {
-      return Response.json(
+      return NextResponse.json(
         {
           success: false,
           errors: validation.errors,
@@ -16,7 +17,7 @@ export async function POST(request) {
       );
     }
 
-    return Response.json(
+    return NextResponse.json(
       {
         success: false,
         message: "Database connection is not configured yet",
@@ -26,7 +27,7 @@ export async function POST(request) {
   } catch (error) {
     console.error("Create Expense API error:", error);
 
-    return Response.json(
+    return NextResponse.json(
       {
         success: false,
         message: "Invalid request",
