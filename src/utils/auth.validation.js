@@ -93,3 +93,39 @@ export function validateOtpInput(data) {
     },
   };
 }
+
+export function validateResetPasswordInput(data) {
+  const errors = {};
+
+  const userId = data.userId?.trim();
+  const email = data.email?.trim().toLowerCase();
+  const otp = data.otp?.trim();
+  const newPassword = data.newPassword;
+
+  if (!userId && !email) {
+    errors.userId = "User ID or email is required";
+  }
+
+  if (!otp) {
+    errors.otp = "Reset code is required";
+  } else if (!/^\d{6}$/.test(otp)) {
+    errors.otp = "Reset code must be 6 digits";
+  }
+
+  if (!newPassword) {
+    errors.newPassword = "New password is required";
+  } else if (newPassword.length < 8) {
+    errors.newPassword = "Password must be at least 8 characters";
+  }
+
+  return {
+    isValid: Object.keys(errors).length === 0,
+    errors,
+    data: {
+      userId,
+      email,
+      otp,
+      newPassword,
+    },
+  };
+}

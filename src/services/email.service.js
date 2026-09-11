@@ -39,3 +39,12 @@ export async function sendVerificationOtp(email, otp) {
     text: `Your CRED Split verification code is ${otp}. It expires in 10 minutes.`,
   });
 }
+
+export async function sendPasswordResetOtp(email, otp) {
+  await getTransporter().sendMail({
+    from: process.env.SMTP_FROM,
+    to: email,
+    subject: "CRED Split password reset code",
+    text: `Your CRED Split password reset code is ${otp}. It expires in 10 minutes. If you did not request this, please ignore this email.`,
+  });
+}

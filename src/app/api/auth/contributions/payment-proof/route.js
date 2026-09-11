@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { createPaymentProof } from "../../../../../services/payment-proof.service.js";
 
 export async function POST(request) {
@@ -8,13 +9,13 @@ export async function POST(request) {
 
     const result = await createPaymentProof(body, prisma);
 
-    return Response.json(result, {
+    return NextResponse.json(result, {
       status: result.status,
     });
   } catch (error) {
     console.error("Payment proof creation error:", error);
 
-    return Response.json(
+    return NextResponse.json(
       {
         success: false,
         status: 500,

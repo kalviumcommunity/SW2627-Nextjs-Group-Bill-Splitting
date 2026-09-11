@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useSyncExternalStore } from "react";
 import LeftBranding from "@/components/LeftBranding";
-import OtpVerifyForm from "@/components/OtpVerifyForm";
+import ResetPasswordForm from "@/components/ResetPasswordForm";
 
 const emptySubscribe = () => () => {};
 
@@ -23,17 +23,17 @@ function useIsClient() {
   );
 }
 
-export default function VerifyOtpPage() {
+export default function ResetPasswordPage() {
   const router = useRouter();
   const isClient = useIsClient();
-  const email = useSessionItem("auth_verify_email");
-  const userId = useSessionItem("auth_verify_userId");
+  const email = useSessionItem("reset_password_email");
+  const userId = useSessionItem("reset_password_userId");
 
-  // Guard: redirect to /register if no session exists once client is mounted
+  // Guard: redirect to /forgot-password if no session exists once client is mounted
   useEffect(() => {
     if (!isClient) return;
     if (!email && !userId) {
-      router.replace("/register");
+      router.replace("/forgot-password");
     }
   }, [isClient, email, userId, router]);
 
@@ -45,34 +45,25 @@ export default function VerifyOtpPage() {
     );
   }
 
-  const handleBack = () => {
-    if (typeof window !== "undefined") {
-      sessionStorage.removeItem("auth_verify_email");
-      sessionStorage.removeItem("auth_verify_userId");
-    }
-    router.push("/register");
-  };
-
   const handleSuccess = () => {
     if (typeof window !== "undefined") {
-      sessionStorage.removeItem("auth_verify_email");
-      sessionStorage.removeItem("auth_verify_userId");
+      sessionStorage.removeItem("reset_password_email");
+      sessionStorage.removeItem("reset_password_userId");
     }
   };
 
   return (
     <main className="min-h-screen w-full flex flex-col lg:flex-row bg-[#f6f3eb] text-[#0f0f12]">
-      {/* Left Section: CRED Split Identity, Remark & Live Bill Split Showcase */}
+      {/* Left Section */}
       <section className="w-full lg:w-1/2 flex items-center justify-center border-b lg:border-b-0 lg:border-r border-[#e6e1d4] relative">
         <LeftBranding />
       </section>
 
-      {/* Right Section: OTP Verification Form Card */}
+      {/* Right Section: Reset Password Form */}
       <section className="w-full lg:w-1/2 flex items-center justify-center bg-[#faf8f4] relative">
-        <OtpVerifyForm
+        <ResetPasswordForm
           email={email}
           userId={userId}
-          onBack={handleBack}
           onSuccess={handleSuccess}
         />
       </section>

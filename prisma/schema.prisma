@@ -1,6 +1,8 @@
 generator client {
   provider = "prisma-client-js"
   output   = "../generated/prisma"
+  generatedFileExtension = "js"
+  importFileExtension    = "js"
 }
 
 datasource db {
@@ -24,18 +26,24 @@ model User {
 }
 
 model OtpVerification {
-  id        String    @id @default(cuid())
+  id        String     @id @default(cuid())
   userId    String
   otpHash   String
+  purpose   OtpPurpose @default(EMAIL_VERIFICATION)
   expiresAt DateTime
-  attempts  Int       @default(0)
+  attempts  Int        @default(0)
   usedAt    DateTime?
-  createdAt DateTime  @default(now())
+  createdAt DateTime   @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([expiresAt])
+}
+
+enum OtpPurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
 }
 
 model Expense {

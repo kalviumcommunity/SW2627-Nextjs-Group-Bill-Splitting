@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
-import OtpVerifyForm from "./OtpVerifyForm";
 
 export default function RegisterForm() {
+  const router = useRouter();
   const [formData, setFormData] = useState({
     fullName: "",
     email: "",
@@ -17,8 +18,6 @@ export default function RegisterForm() {
   const [errors, setErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [serverStatus, setServerStatus] = useState(null);
-  const [showOtpScreen, setShowOtpScreen] = useState(false);
-  const [registrationUserId, setRegistrationUserId] = useState("");
 
   // Handle Input Changes
   const handleChange = (e) => {
@@ -138,8 +137,12 @@ export default function RegisterForm() {
         throw new Error(result.message || "Unable to register");
       }
 
-      setRegistrationUserId(result.userId);
-      setShowOtpScreen(true);
+      // Store verification details in sessionStorage to keep URL bar clean without query params
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("auth_verify_email", result.email || formData.email);
+        sessionStorage.setItem("auth_verify_userId", result.userId || "");
+      }
+      router.push("/verify-otp");
     } catch (err) {
       setServerStatus({
         type: "error",
@@ -149,20 +152,6 @@ export default function RegisterForm() {
       setIsSubmitting(false);
     }
   };
-
-  // Render OTP Verification Screen upon registration initiation
-  if (showOtpScreen) {
-    return (
-      <OtpVerifyForm
-        email={formData.email}
-        userId={registrationUserId}
-        onBack={() => setShowOtpScreen(false)}
-        onSuccess={() => {
-          console.log("Account activated successfully for", formData.email);
-        }}
-      />
-    );
-  }
 
   return (
     <div className="flex flex-col justify-between w-full h-full p-6 sm:p-10 lg:p-14 xl:p-16">

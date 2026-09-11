@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 export default function ForgotPasswordForm() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [focusedField, setFocusedField] = useState(false);
   const [error, setError] = useState("");
@@ -60,7 +62,8 @@ export default function ForgotPasswordForm() {
      *      {
      *        success: true,
      *        message: "A 6-digit password reset OTP has been sent to your email address.",
-     *        email: "..."
+     *        email: "...",
+     *        userId: "..."
      *      }
      *    - User Not Found (404 Not Found):
      *      {
@@ -75,17 +78,27 @@ export default function ForgotPasswordForm() {
      */
 
     try {
-      // Simulate backend network delay for frontend preview
-      await new Promise((resolve) => setTimeout(resolve, 800));
-
-      setServerStatus({
-        type: "success",
-        message: `A 6-digit verification code has been dispatched to ${email.trim()}`,
+      const response = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim() }),
       });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.message || "Unable to process request");
+      }
+
+      // Store reset details in sessionStorage to keep URL bar clean without query params
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("reset_password_email", result.email || email.trim());
+        sessionStorage.setItem("reset_password_userId", result.userId || "");
+      }
+      router.push("/reset-password");
     } catch (err) {
       setServerStatus({
         type: "error",
-        message: "Unable to process password reset request. Please try again.",
+        message: err.message || "Unable to process password reset request. Please try again.",
       });
     } finally {
       setIsSubmitting(false);
@@ -153,6 +166,7 @@ export default function ForgotPasswordForm() {
                   onFocus={() => setFocusedField(true)}
                   onBlur={() => setFocusedField(false)}
                   className="w-full px-4 py-3.5 text-sm text-[#121214] placeholder-[#a4a095] bg-transparent outline-none rounded-xl font-medium"
+                  disabled={isSubmitting}
                 />
               </div>
               {error && (

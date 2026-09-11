@@ -169,6 +169,10 @@ export default function OtpVerifyForm({
       if (!response.ok) throw new Error(result.message || "Invalid verification code");
 
       setSuccessMessage(result.message || "Account verified successfully! Welcome to CRED Split.");
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem("auth_verify_email");
+        sessionStorage.removeItem("auth_verify_userId");
+      }
       if (onSuccess) {
         onSuccess();
       }

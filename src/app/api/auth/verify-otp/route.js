@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { verifyOtp } from "../../../../services/otp.service";
 import { validateOtpInput } from "../../../../utils/auth.validation";
 import { prisma } from "../../../../lib/prisma";
@@ -9,7 +10,7 @@ export async function POST(request) {
     const validation = validateOtpInput(body);
 
     if (!validation.isValid) {
-      return Response.json(
+      return NextResponse.json(
         {
           success: false,
           errors: validation.errors,
@@ -24,7 +25,7 @@ export async function POST(request) {
     if (!resolvedUserId) {
       const user = await prisma.user.findUnique({ where: { email } });
       if (!user) {
-        return Response.json(
+        return NextResponse.json(
           { success: false, message: "Unable to verify this account" },
           { status: 400 }
         );
@@ -33,11 +34,11 @@ export async function POST(request) {
     }
 
     const result = await verifyOtp(resolvedUserId, otp, prisma);
-    return Response.json(result, { status: result.status });
+    return NextResponse.json(result, { status: result.status });
   } catch (error) {
     console.error("OTP verification API error:", error);
 
-    return Response.json(
+    return NextResponse.json(
       {
         success: false,
         message: "Invalid request",

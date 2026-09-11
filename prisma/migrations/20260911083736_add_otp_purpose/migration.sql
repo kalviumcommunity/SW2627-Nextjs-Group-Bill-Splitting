@@ -1,0 +1,5 @@
+-- CreateEnum
+CREATE TYPE "OtpPurpose" AS ENUM ('EMAIL_VERIFICATION', 'PASSWORD_RESET');
+
+-- AlterTable
+ALTER TABLE "OtpVerification" ADD COLUMN     "purpose" "OtpPurpose" NOT NULL DEFAULT 'EMAIL_VERIFICATION';
