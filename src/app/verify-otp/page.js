@@ -1,32 +1,43 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import LeftBranding from "@/components/LeftBranding";
 import OtpVerifyForm from "@/components/OtpVerifyForm";
 
+const emptySubscribe = () => () => {};
+
+function useSessionItem(key) {
+  return useSyncExternalStore(
+    emptySubscribe,
+    () => (typeof window !== "undefined" ? sessionStorage.getItem(key) || "" : ""),
+    () => ""
+  );
+}
+
+function useIsClient() {
+  return useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
+}
+
 export default function VerifyOtpPage() {
   const router = useRouter();
-  const [mounted, setMounted] = useState(false);
-  const [email, setEmail] = useState("");
-  const [userId, setUserId] = useState("");
+  const isClient = useIsClient();
+  const email = useSessionItem("auth_verify_email");
+  const userId = useSessionItem("auth_verify_userId");
 
-  // Guard: read from sessionStorage, redirect to /register if no email or userId found
+  // Guard: redirect to /register if no session exists once client is mounted
   useEffect(() => {
-    const storedEmail = typeof window !== "undefined" ? sessionStorage.getItem("auth_verify_email") : null;
-    const storedUserId = typeof window !== "undefined" ? sessionStorage.getItem("auth_verify_userId") : null;
-
-    if (!storedEmail && !storedUserId) {
+    if (!isClient) return;
+    if (!email && !userId) {
       router.replace("/register");
-    } else {
-      setEmail(storedEmail || "");
-      setUserId(storedUserId || "");
-      setMounted(true);
     }
-  }, [router]);
+  }, [isClient, email, userId, router]);
 
-  // Don't render until mounted & validated
-  if (!mounted || (!email && !userId)) {
+  if (!isClient || (!email && !userId)) {
     return (
       <div className="min-h-screen w-full flex items-center justify-center bg-[#f6f3eb]">
         <div className="animate-spin h-6 w-6 border-2 border-[#121214] border-t-transparent rounded-full" />

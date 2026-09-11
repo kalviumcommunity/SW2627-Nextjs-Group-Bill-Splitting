@@ -1,31 +1,43 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import LeftBranding from "@/components/LeftBranding";
 import ResetPasswordForm from "@/components/ResetPasswordForm";
 
+const emptySubscribe = () => () => {};
+
+function useSessionItem(key) {
+  return useSyncExternalStore(
+    emptySubscribe,
+    () => (typeof window !== "undefined" ? sessionStorage.getItem(key) || "" : ""),
+    () => ""
+  );
+}
+
+function useIsClient() {
+  return useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
+}
+
 export default function ResetPasswordPage() {
   const router = useRouter();
-  const [mounted, setMounted] = useState(false);
-  const [email, setEmail] = useState("");
-  const [userId, setUserId] = useState("");
+  const isClient = useIsClient();
+  const email = useSessionItem("reset_password_email");
+  const userId = useSessionItem("reset_password_userId");
 
-  // Guard: read from sessionStorage, redirect to /forgot-password if no email or userId found
+  // Guard: redirect to /forgot-password if no session exists once client is mounted
   useEffect(() => {
-    const storedEmail = typeof window !== "undefined" ? sessionStorage.getItem("reset_password_email") : null;
-    const storedUserId = typeof window !== "undefined" ? sessionStorage.getItem("reset_password_userId") : null;
-
-    if (!storedEmail && !storedUserId) {
+    if (!isClient) return;
+    if (!email && !userId) {
       router.replace("/forgot-password");
-    } else {
-      setEmail(storedEmail || "");
-      setUserId(storedUserId || "");
-      setMounted(true);
     }
-  }, [router]);
+  }, [isClient, email, userId, router]);
 
-  if (!mounted || (!email && !userId)) {
+  if (!isClient || (!email && !userId)) {
     return (
       <div className="min-h-screen w-full flex items-center justify-center bg-[#f6f3eb]">
         <div className="animate-spin h-6 w-6 border-2 border-[#121214] border-t-transparent rounded-full" />
