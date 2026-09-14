@@ -1,19 +1,15 @@
 "use client";
 
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 export default function PayerDashboard({ initialUser = null }) {
   const router = useRouter();
 
-  // User State
-  const [user, setUser] = useState(
-    initialUser || {
-      fullName: "Alex Rivera",
-      email: "alex.rivera@example.com",
-    }
-  );
+  // User State: loaded dynamically
+  const [user, setUser] = useState(initialUser);
+  const [isLoading, setIsLoading] = useState(!initialUser);
 
   // Search, Filter, Sort States
   const [searchQuery, setSearchQuery] = useState("");
@@ -22,64 +18,12 @@ export default function PayerDashboard({ initialUser = null }) {
   const [showSortDropdown, setShowSortDropdown] = useState(false);
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
 
-  // Assigned Expenses Dataset matching the wireframe and PRD
-  // Note: Remaining sum = 300.00 + 85.50 + 400.00 + 455.00 = $1,240.50 (exact wireframe match)
-  // Pending count = 4 (exact wireframe match)
-  const [expenses, setExpenses] = useState([
-    {
-      id: "exp_1",
-      title: "Q3 Offsite Flights",
-      creator: "Sarah Jenkins",
-      creatorEmail: "sarah.j@example.com",
-      assigned: 450.0,
-      paidSoFar: 150.0,
-      remaining: 300.0,
-      dueDate: "Oct 24, 2026",
-      category: "Travel & Flights",
-      createdAt: "2026-09-01T10:00:00Z",
-    },
-    {
-      id: "exp_2",
-      title: "Client Dinner - Q2",
-      creator: "Michael Chen",
-      creatorEmail: "michael.c@example.com",
-      assigned: 85.5,
-      paidSoFar: 0.0,
-      remaining: 85.5,
-      dueDate: "Nov 02, 2026",
-      category: "Food & Dining",
-      createdAt: "2026-09-03T14:30:00Z",
-    },
-    {
-      id: "exp_3",
-      title: "Software Licenses - Annual",
-      creator: "IT Dept",
-      creatorEmail: "it.admin@example.com",
-      assigned: 1200.0,
-      paidSoFar: 800.0,
-      remaining: 400.0,
-      dueDate: "Nov 15, 2026",
-      category: "Subscriptions",
-      createdAt: "2026-08-28T09:15:00Z",
-    },
-    {
-      id: "exp_4",
-      title: "Team Retreat Lodging",
-      creator: "Maya Patel",
-      creatorEmail: "maya.p@example.com",
-      assigned: 655.0,
-      paidSoFar: 200.0,
-      remaining: 455.0,
-      dueDate: "Nov 20, 2026",
-      category: "Accommodation",
-      createdAt: "2026-08-25T11:00:00Z",
-    },
-  ]);
+  // Assigned Expenses: starts empty, no stale dummy data
+  const [expenses, setExpenses] = useState([]);
 
-  // Payment Modal States (PRD Settle Contribution & Proof flow)
+  // Payment Modal States (Settle Contribution & Proof flow — no payment method)
   const [activeExpenseForPayment, setActiveExpenseForPayment] = useState(null);
   const [paymentAmount, setPaymentAmount] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState("upi"); // 'upi' | 'netbanking' | 'card' | 'cash'
   const [paymentProofFile, setPaymentProofFile] = useState(null);
   const [transactionRef, setTransactionRef] = useState("");
   const [paymentNote, setPaymentNote] = useState("");
@@ -96,9 +40,43 @@ export default function PayerDashboard({ initialUser = null }) {
     }, 4500);
   };
 
+  // Fetch live user data from backend
+  useEffect(() => {
+    let isMounted = true;
+    async function loadData() {
+      try {
+        const res = await fetch("/api/dashboard", { credentials: "include" });
+        if (res.status === 401) {
+          router.push("/login");
+          return;
+        }
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.success) {
+            if (data.user) setUser(data.user);
+          }
+        }
+      } catch (err) {
+        console.warn("Could not load payer data:", err.message);
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    }
+    loadData();
+    return () => {
+      isMounted = false;
+    };
+  }, [router]);
+
   // Logout Handler
-  const handleLogout = () => {
-    router.push("/login");
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch (err) {
+      // ignore
+    } finally {
+      router.push("/login");
+    }
   };
 
   // Derived Metrics
@@ -108,7 +86,7 @@ export default function PayerDashboard({ initialUser = null }) {
 
   const totalOutstandingAmount = useMemo(() => {
     const sum = expenses.reduce((acc, e) => acc + e.remaining, 0);
-    return sum.toLocaleString("en-US", {
+    return sum.toLocaleString("en-IN", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
@@ -152,7 +130,6 @@ export default function PayerDashboard({ initialUser = null }) {
   const handleOpenPayment = (expense) => {
     setActiveExpenseForPayment(expense);
     setPaymentAmount(expense.remaining.toFixed(2));
-    setPaymentMethod("upi");
     setPaymentProofFile(null);
     setTransactionRef("");
     setPaymentNote("");
@@ -213,7 +190,7 @@ export default function PayerDashboard({ initialUser = null }) {
 
       setIsSubmittingPayment(false);
       showToast(
-        `Successfully submitted $${amountNum.toFixed(2)} payment for ${
+        `Successfully submitted ₹${amountNum.toFixed(2)} payment for ${
           activeExpenseForPayment.title
         }. Proof recorded!`,
         "success"
@@ -224,12 +201,13 @@ export default function PayerDashboard({ initialUser = null }) {
 
   // User Initials
   const userInitials = useMemo(() => {
-    if (!user?.fullName) return "AR";
-    const parts = user.fullName.trim().split(" ");
+    const name = user?.fullName || user?.name || "";
+    if (!name.trim()) return "•";
+    const parts = name.trim().split(/\s+/);
     if (parts.length >= 2) {
       return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
     }
-    return user.fullName.slice(0, 2).toUpperCase();
+    return name.slice(0, 2).toUpperCase();
   }, [user]);
 
   return (
@@ -342,28 +320,6 @@ export default function PayerDashboard({ initialUser = null }) {
         {/* Top Header */}
         <header className="w-full bg-transparent px-6 sm:px-10 lg:px-12 pt-4 pb-2 flex items-center justify-end">
           <div className="flex items-center gap-3">
-            {/* Notification Bell */}
-            <button
-              type="button"
-              className="w-10 h-10 rounded-full bg-white border border-[#ded6c7] text-[#121214] flex items-center justify-center hover:bg-[#faf7f0] hover:shadow-xs transition-all cursor-pointer shadow-2xs"
-              aria-label="Notifications"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                strokeWidth={1.75}
-                stroke="currentColor"
-                className="w-4 h-4"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0"
-                />
-              </svg>
-            </button>
-
             {/* Profile Avatar Ring */}
             <div
               className="w-10 h-10 rounded-full bg-[#121214] text-white flex items-center justify-center font-bold text-xs tracking-wider border-2 border-[#ded6c7] hover:border-[#121214] transition-colors cursor-pointer shadow-2xs"
@@ -444,7 +400,7 @@ export default function PayerDashboard({ initialUser = null }) {
               </div>
               <div>
                 <div className="font-serif-luxury text-4xl sm:text-5xl font-bold text-[#8a3d1c] tracking-tight">
-                  ${totalOutstandingAmount}
+                  {isLoading ? "—" : `₹${totalOutstandingAmount}`}
                 </div>
                 <div className="text-[11px] text-[#8a8477] font-medium mt-1">
                   Across {expenses.length} assigned group splits
@@ -712,7 +668,23 @@ export default function PayerDashboard({ initialUser = null }) {
 
           {/* ── Assigned Expenses Cards List (Matching Wireframe) ── */}
           <div className="space-y-4">
-            {displayedExpenses.length === 0 ? (
+            {expenses.length === 0 ? (
+              /* Primary Empty State — No assigned expenses at all */
+              <div className="bg-white rounded-3xl p-10 sm:p-12 border border-[#dfd7c8] text-center shadow-xs">
+                <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-[#f5ede2] border border-[#e5d8c3] flex items-center justify-center text-[#8a3d1c]">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-7 h-7">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z" />
+                  </svg>
+                </div>
+                <h4 className="font-serif-luxury text-2xl font-bold text-[#121214] mb-2">
+                  No Assigned Expenses
+                </h4>
+                <p className="text-xs sm:text-sm text-[#736e65] max-w-md mx-auto leading-relaxed">
+                  You don&apos;t have any assigned expenses yet. When a creator adds you to a split, it will appear here for you to view and settle.
+                </p>
+              </div>
+            ) : displayedExpenses.length === 0 ? (
+              /* Filter/Search Empty State */
               <div className="bg-white rounded-3xl p-12 text-center border border-[#dfd7c8] shadow-2xs">
                 <div className="w-12 h-12 rounded-full bg-[#f4efe6] text-[#736e65] flex items-center justify-center mx-auto mb-3 text-lg font-bold">
                   ✓
@@ -774,7 +746,7 @@ export default function PayerDashboard({ initialUser = null }) {
                           Assigned
                         </span>
                         <span className="text-sm sm:text-base font-bold text-[#121214]">
-                          ${expense.assigned.toFixed(2)}
+                          ₹{expense.assigned.toFixed(2)}
                         </span>
                       </div>
 
@@ -784,7 +756,7 @@ export default function PayerDashboard({ initialUser = null }) {
                           Paid So Far
                         </span>
                         <span className="text-sm sm:text-base font-bold text-[#121214]">
-                          ${expense.paidSoFar.toFixed(2)}
+                          ₹{expense.paidSoFar.toFixed(2)}
                         </span>
                       </div>
 
@@ -798,7 +770,7 @@ export default function PayerDashboard({ initialUser = null }) {
                             isFullyPaid ? "text-[#15803d]" : "text-[#8a3d1c]"
                           }`}
                         >
-                          ${expense.remaining.toFixed(2)}
+                          ₹{expense.remaining.toFixed(2)}
                         </span>
                       </div>
 
@@ -886,7 +858,7 @@ export default function PayerDashboard({ initialUser = null }) {
                     Total Assigned
                   </span>
                   <span className="text-sm sm:text-base font-bold text-[#121214] mt-0.5 block">
-                    ${activeExpenseForPayment.assigned.toFixed(2)}
+                    ₹{activeExpenseForPayment.assigned.toFixed(2)}
                   </span>
                 </div>
                 <div className="border-x border-[#ede4d4]">
@@ -894,7 +866,7 @@ export default function PayerDashboard({ initialUser = null }) {
                     Paid So Far
                   </span>
                   <span className="text-sm sm:text-base font-bold text-[#121214] mt-0.5 block">
-                    ${activeExpenseForPayment.paidSoFar.toFixed(2)}
+                    ₹{activeExpenseForPayment.paidSoFar.toFixed(2)}
                   </span>
                 </div>
                 <div>
@@ -902,16 +874,16 @@ export default function PayerDashboard({ initialUser = null }) {
                     Remaining Due
                   </span>
                   <span className="text-sm sm:text-base font-bold text-[#8a3d1c] mt-0.5 block">
-                    ${activeExpenseForPayment.remaining.toFixed(2)}
+                    ₹{activeExpenseForPayment.remaining.toFixed(2)}
                   </span>
                 </div>
               </div>
 
-              {/* Payment Amount Input with Quick Preset Chips */}
+              {/* Payment Amount Input with Quick Preset Chips (₹, no spin arrows) */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-xs font-bold text-[#121214] uppercase tracking-wider">
-                    Payment Amount ($)
+                    Payment Amount (₹)
                   </label>
                   <div className="flex items-center gap-1.5">
                     <button
@@ -923,7 +895,7 @@ export default function PayerDashboard({ initialUser = null }) {
                       }
                       className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-[#f4efe6] text-[#6c685f] hover:text-[#121214] hover:bg-[#ede6d8] transition-colors cursor-pointer"
                     >
-                      Pay Full (${activeExpenseForPayment.remaining.toFixed(2)})
+                      Pay Full (₹{activeExpenseForPayment.remaining.toFixed(2)})
                     </button>
                     {activeExpenseForPayment.remaining > 20 && (
                       <button
@@ -935,8 +907,7 @@ export default function PayerDashboard({ initialUser = null }) {
                         }
                         className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-[#f4efe6] text-[#6c685f] hover:text-[#121214] hover:bg-[#ede6d8] transition-colors cursor-pointer"
                       >
-                        Pay Half ($
-                        {(activeExpenseForPayment.remaining / 2).toFixed(2)})
+                        Pay Half (₹{(activeExpenseForPayment.remaining / 2).toFixed(2)})
                       </button>
                     )}
                   </div>
@@ -944,57 +915,22 @@ export default function PayerDashboard({ initialUser = null }) {
 
                 <div className="relative">
                   <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-[#8a8477]">
-                    $
+                    ₹
                   </span>
                   <input
-                    type="number"
-                    step="0.01"
-                    min="1"
-                    max={activeExpenseForPayment.remaining}
+                    type="text"
+                    inputMode="decimal"
                     value={paymentAmount}
-                    onChange={(e) => setPaymentAmount(e.target.value)}
-                    className="w-full pl-8 pr-4 py-2.5 text-base font-bold rounded-xl border border-[#ded6c7] focus:outline-none focus:border-[#121214] transition-all bg-white"
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/[^0-9.]/g, "");
+                      const parts = val.split(".");
+                      if (parts.length > 2) return;
+                      setPaymentAmount(val);
+                    }}
+                    className="w-full pl-8 pr-4 py-2.5 text-base font-bold rounded-xl border border-[#ded6c7] focus:outline-none focus:border-[#121214] transition-all bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                     placeholder="0.00"
                     required
                   />
-                </div>
-              </div>
-
-              {/* Payment Method Selector */}
-              <div>
-                <label className="block text-xs font-bold text-[#121214] uppercase tracking-wider mb-2">
-                  Select Payment Method
-                </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                  {[
-                    { id: "upi", label: "UPI", desc: "GPay / PhonePe" },
-                    { id: "netbanking", label: "Net Banking", desc: "IMPS / NEFT" },
-                    { id: "card", label: "Debit Card", desc: "Visa / MC" },
-                    { id: "cash", label: "Cash", desc: "Offline / Direct" },
-                  ].map((m) => (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => setPaymentMethod(m.id)}
-                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                        paymentMethod === m.id
-                          ? "border-[#121214] bg-[#fcfaf7] shadow-xs"
-                          : "border-[#ded6c7] hover:border-[#b5ac9d]"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-bold text-[#121214]">
-                          {m.label}
-                        </span>
-                        {paymentMethod === m.id && (
-                          <span className="w-2 h-2 rounded-full bg-[#121214]" />
-                        )}
-                      </div>
-                      <span className="text-[10px] text-[#8a8477] block">
-                        {m.desc}
-                      </span>
-                    </button>
-                  ))}
                 </div>
               </div>
 
