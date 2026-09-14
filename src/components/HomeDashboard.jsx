@@ -7,88 +7,45 @@ import { useRouter } from "next/navigation";
 export default function HomeDashboard({ initialUser = null }) {
   const router = useRouter();
 
-  // User State
-  const [user, setUser] = useState(
-    initialUser || {
-      fullName: "Alex Rivera",
-      email: "alex.rivera@example.com",
-    }
-  );
-
+  // User State: real user loaded dynamically or via props
+  const [user, setUser] = useState(initialUser);
+  const [isLoading, setIsLoading] = useState(!initialUser);
   const [activeTab, setActiveTab] = useState("home");
   const [activityFilter, setActivityFilter] = useState("all");
   const [currentDateTime, setCurrentDateTime] = useState("");
 
-  // Recent 4 Activities (Creator & Payer actions)
-  const [recentActivities, setRecentActivities] = useState([
-    {
-      id: "act_1",
-      type: "payment_received",
-      title: "Payment received from Alex",
-      subtitle: "Dinner at Dorsia • 2 hours ago",
-      amount: "+$45.00",
-      amountType: "positive",
-      status: "received",
-      category: "creator",
-      role: "creator",
-    },
-    {
-      id: "act_2",
-      type: "split_created",
-      title: "New Split created",
-      subtitle: "Weekend Getaway • Yesterday",
-      amount: null,
-      status: "Pending",
-      statusBadge: "Pending Approval",
-      category: "creator",
-      role: "creator",
-    },
-    {
-      id: "act_3",
-      type: "payment_settled",
-      title: "Settled payment to Sarah",
-      subtitle: "Cab to Airport • 3 days ago",
-      amount: "-$22.50",
-      amountType: "negative",
-      status: "Settled",
-      statusBadge: "Settled",
-      category: "payer",
-      role: "payer",
-    },
-    {
-      id: "act_4",
-      type: "payment_received",
-      title: "Payment received from Maya",
-      subtitle: "Concert Tickets • 4 days ago",
-      amount: "+$65.00",
-      amountType: "positive",
-      status: "received",
-      category: "creator",
-      role: "creator",
-    },
-  ]);
+  // Recent Activities: real data loaded dynamically (empty by default)
+  const [recentActivities, setRecentActivities] = useState([]);
 
-  // Summary Metrics
+  // Summary Metrics: real numbers loaded dynamically (default to zeros)
   const [stats, setStats] = useState({
     creator: {
-      active: 4,
-      pendingAmount: "$1.2k",
+      active: 0,
+      pendingAmount: "$0",
     },
     payer: {
-      dueCount: 2,
-      totalDue: "$340",
+      dueCount: 0,
+      totalDue: "$0",
     },
   });
 
   // Calculate User Initials for Top Avatar
   const getUserInitials = (name) => {
-    if (!name) return "AR";
+    if (!name || !name.trim()) return "•";
     const parts = name.trim().split(/\s+/);
     if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   };
 
-  const userInitials = getUserInitials(user?.fullName || "Alex Rivera");
+  const userInitials = getUserInitials(user?.fullName || user?.name || "");
+
+  // Dynamic time greeting
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return "Good morning";
+    if (hour < 17) return "Good afternoon";
+    return "Good evening";
+  };
 
   // Live Dynamic Clock (Updates every second)
   useEffect(() => {
@@ -139,6 +96,50 @@ export default function HomeDashboard({ initialUser = null }) {
     return () => clearInterval(interval);
   }, []);
 
+  // Fetch live dashboard data from backend API
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadDashboardData() {
+      try {
+        const response = await fetch("/api/dashboard", { credentials: "include" });
+        if (response.status === 401) {
+          router.push("/login");
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch dashboard data");
+        }
+
+        const data = await response.json();
+        if (data.success && isMounted) {
+          if (data.user) {
+            setUser(data.user);
+          }
+          if (data.stats) {
+            setStats(data.stats);
+          }
+          if (Array.isArray(data.recentActivities)) {
+            setRecentActivities(data.recentActivities);
+          }
+        }
+      } catch (err) {
+        console.warn("Could not load dashboard data from backend:", err.message);
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    loadDashboardData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [router]);
+
   // Filtered Activities
   const filteredActivities = recentActivities.filter((item) => {
     if (activityFilter === "all") return true;
@@ -147,24 +148,12 @@ export default function HomeDashboard({ initialUser = null }) {
     return true;
   });
 
-  /*
-   * BACKEND CONTRACT (From PRD Section 8.1 & 9.1 Dashboard Summary):
-   *
-   * 1. GET /api/dashboard/summary
-   *    Headers: { Authorization: "Bearer <token>" }
-   *    Expects: { success: true, user: {...}, stats: {...} }
-   *
-   * 2. GET /api/dashboard/activities?limit=3
-   *    Headers: { Authorization: "Bearer <token>" }
-   *    Expects: { success: true, activities: [...] }
-   *
-   * 3. POST /api/auth/logout
-   */
   const handleLogout = async () => {
     try {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      router.push("/login");
+      await fetch("/api/auth/logout", { method: "POST" });
     } catch (err) {
+      // ignore
+    } finally {
       router.push("/login");
     }
   };
@@ -314,7 +303,7 @@ export default function HomeDashboard({ initialUser = null }) {
               className="w-10 h-10 rounded-full bg-[#121214] text-white flex items-center justify-center font-bold text-xs tracking-wider border-2 border-[#ded6c7] hover:border-[#121214] transition-colors cursor-pointer shadow-2xs"
               title={`${user?.fullName || "User"} (${user?.email || ""})`}
             >
-              {userInitials}
+              {isLoading && !user ? "•" : userInitials}
             </div>
           </div>
         </header>
@@ -322,7 +311,7 @@ export default function HomeDashboard({ initialUser = null }) {
         {/* Dashboard Content Container */}
         <div className="flex-1 px-6 sm:px-10 lg:px-12 pb-12 space-y-7 max-w-5xl w-full">
           
-          {/* Hero Welcome Header (With gap & dynamic user name) */}
+          {/* Hero Welcome Header (Dynamic user name & greeting quote) */}
           <div className="pt-0">
             {/* Timestamp Badge */}
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#ede6d8]/80 text-[11px] font-semibold text-[#4e4a40] mb-3.5">
@@ -330,9 +319,15 @@ export default function HomeDashboard({ initialUser = null }) {
               <span>{currentDateTime}</span>
             </div>
 
-            {/* Main Welcome Headline with User Name */}
+            {/* Main Welcome Headline with Real User Name */}
             <h2 className="font-serif-luxury text-3xl sm:text-4xl font-bold tracking-tight text-[#121214] leading-tight mb-2">
-              Welcome back, {user?.fullName || "Alex Rivera"}.
+              {user?.fullName ? (
+                <>Welcome back, {user.fullName}.</>
+              ) : isLoading ? (
+                <span className="inline-block w-64 h-9 bg-[#e8dfcf]/60 animate-pulse rounded-lg" />
+              ) : (
+                <>{getGreeting()}, Member.</>
+              )}
             </h2>
             <p className="text-xs sm:text-sm text-[#605c52] font-normal leading-relaxed max-w-xl">
               Manage your active splits, track incoming payments, or settle your open balances.
@@ -344,7 +339,7 @@ export default function HomeDashboard({ initialUser = null }) {
              ─────────────────────────────────────────────────────────── */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             
-            {/* CARD 1: Creator Dashboard (Entire card clickable) */}
+            {/* CARD 1: Creator Dashboard */}
             <Link
               href="/creator"
               className="group bg-white rounded-3xl p-8 border border-[#dfd7c8] shadow-[0_10px_30px_-15px_rgba(40,30,15,0.03)] hover:shadow-[0_20px_45px_-15px_rgba(40,30,15,0.08)] hover:-translate-y-1 transition-all duration-300 flex flex-col justify-between cursor-pointer"
@@ -383,14 +378,14 @@ export default function HomeDashboard({ initialUser = null }) {
                   Create &amp; Manage Splits →
                 </span>
 
-                {/* Metric Boxes */}
+                {/* Metric Boxes with Real Numbers */}
                 <div className="flex items-center gap-2">
                   <div className="border border-[#ded6c7] rounded-2xl px-4 py-2 text-center bg-white min-w-[58px] shadow-2xs">
                     <span className="block text-[9px] uppercase tracking-wider text-[#8a8477] font-semibold">
                       ACTIVE
                     </span>
                     <span className="text-base font-bold text-[#121214] font-mono leading-none mt-0.5 block">
-                      {stats.creator.active}
+                      {isLoading ? "—" : stats.creator.active}
                     </span>
                   </div>
 
@@ -399,14 +394,14 @@ export default function HomeDashboard({ initialUser = null }) {
                       PENDING
                     </span>
                     <span className="text-base font-serif-luxury font-bold text-[#8a3d1c] leading-none mt-0.5 block">
-                      {stats.creator.pendingAmount}
+                      {isLoading ? "—" : stats.creator.pendingAmount}
                     </span>
                   </div>
                 </div>
               </div>
             </Link>
 
-            {/* CARD 2: Payer Dashboard (Entire card clickable) */}
+            {/* CARD 2: Payer Dashboard */}
             <Link
               href="/payer"
               className="group bg-white rounded-3xl p-8 border border-[#dfd7c8] shadow-[0_10px_30px_-15px_rgba(40,30,15,0.03)] hover:shadow-[0_20px_45px_-15px_rgba(40,30,15,0.08)] hover:-translate-y-1 transition-all duration-300 flex flex-col justify-between cursor-pointer"
@@ -445,14 +440,14 @@ export default function HomeDashboard({ initialUser = null }) {
                   View &amp; Pay My Bills →
                 </span>
 
-                {/* Metric Boxes */}
+                {/* Metric Boxes with Real Numbers */}
                 <div className="flex items-center gap-2">
                   <div className="border border-[#ded6c7] rounded-2xl px-4 py-2 text-center bg-white min-w-[58px] shadow-2xs">
                     <span className="block text-[9px] uppercase tracking-wider text-[#8a8477] font-semibold">
                       DUE
                     </span>
                     <span className="text-base font-serif-luxury font-bold text-[#992222] leading-none mt-0.5 block">
-                      {stats.payer.dueCount}
+                      {isLoading ? "—" : stats.payer.dueCount}
                     </span>
                   </div>
 
@@ -461,7 +456,7 @@ export default function HomeDashboard({ initialUser = null }) {
                       TOTAL
                     </span>
                     <span className="text-base font-serif-luxury font-bold text-[#121214] leading-none mt-0.5 block">
-                      {stats.payer.totalDue}
+                      {isLoading ? "—" : stats.payer.totalDue}
                     </span>
                   </div>
                 </div>
@@ -470,7 +465,7 @@ export default function HomeDashboard({ initialUser = null }) {
           </div>
 
           {/* ───────────────────────────────────────────────────────────
-              4. RECENT ACTIVITY (With Filter Capsules matching screenshot)
+              4. RECENT ACTIVITY (Real Activities & Empty State)
              ─────────────────────────────────────────────────────────── */}
           <div className="space-y-4 pt-2">
             <div className="flex items-center justify-between">
@@ -478,7 +473,7 @@ export default function HomeDashboard({ initialUser = null }) {
                 Recent Activity
               </h3>
 
-              {/* Capsule Filter Pills matching screenshot */}
+              {/* Capsule Filter Pills */}
               <div className="inline-flex items-center gap-1 p-1 rounded-full bg-white border border-[#e4d8c5] shadow-2xs">
                 <button
                   type="button"
@@ -518,106 +513,176 @@ export default function HomeDashboard({ initialUser = null }) {
 
             {/* List Container Card */}
             <div className="bg-white rounded-3xl border border-[#dfd7c8] divide-y divide-[#f2ebd9] shadow-sm overflow-hidden">
-              {filteredActivities.map((act) => (
-                <div
-                  key={act.id}
-                  className="py-4 px-6 sm:px-7 flex items-center justify-between gap-4 hover:bg-[#faf7f0]/60 transition-colors"
-                >
-                  {/* Left: Icon & Description */}
-                  <div className="flex items-center gap-4">
-                    {/* Activity Icon Box */}
-                    <div
-                      className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 border ${
-                        act.type === "payment_received"
-                          ? "bg-[#eefaf2] border-[#c6f0d4] text-[#15803d]"
-                          : act.type === "split_created"
-                          ? "bg-[#fef8ea] border-[#fde8b3] text-[#b45309]"
-                          : "bg-[#f0f9f4] border-[#cbece0] text-[#167d4f]"
-                      }`}
-                    >
-                      {act.type === "payment_received" ? (
-                        /* Incoming Payment Arrow */
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          strokeWidth={2}
-                          stroke="currentColor"
-                          className="w-4.5 h-4.5 text-[#15803d]"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M19.5 4.5l-15 15m0 0h11.25m-11.25 0V8.25"
-                          />
-                        </svg>
-                      ) : act.type === "split_created" ? (
-                        /* Document / Receipt Icon */
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          strokeWidth={1.8}
-                          stroke="currentColor"
-                          className="w-4.5 h-4.5 text-[#b45309]"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"
-                          />
-                        </svg>
-                      ) : (
-                        /* Outgoing Settled Check Icon */
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          strokeWidth={2.2}
-                          stroke="currentColor"
-                          className="w-4.5 h-4.5 text-[#167d4f]"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M4.5 12.75l6 6 9-13.5"
-                          />
-                        </svg>
-                      )}
+              {isLoading ? (
+                /* Skeleton Loader */
+                <div className="py-10 px-6 space-y-4">
+                  <div className="flex items-center justify-between animate-pulse">
+                    <div className="flex items-center gap-4">
+                      <div className="w-11 h-11 rounded-2xl bg-[#ede6d8]" />
+                      <div className="space-y-2">
+                        <div className="w-40 h-4 bg-[#ede6d8] rounded" />
+                        <div className="w-24 h-3 bg-[#ede6d8] rounded" />
+                      </div>
                     </div>
-
-                    {/* Text Title & Subtitle */}
-                    <div>
-                      <h4 className="text-sm sm:text-base font-bold text-[#121214] leading-snug">
-                        {act.title}
-                      </h4>
-                      <p className="text-xs text-[#736e65] mt-0.5">
-                        {act.subtitle}
-                      </p>
-                    </div>
+                    <div className="w-16 h-6 bg-[#ede6d8] rounded" />
                   </div>
-
-                  {/* Right: Amount or Status Badge matching screenshot */}
-                  <div className="text-right shrink-0">
-                    {act.amount ? (
-                      <span
-                        className={`font-serif-luxury text-2xl font-bold tracking-tight ${
-                          act.amountType === "positive"
-                            ? "text-[#8a3d1c]"
-                            : "text-[#121214]"
-                        }`}
-                      >
-                        {act.amount}
-                      </span>
-                    ) : act.statusBadge ? (
-                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-3.5 py-1 rounded-full bg-[#fdf6e6] border border-[#f5deaa] text-[#925413]">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#b45309]" />
-                        <span>{act.statusBadge}</span>
-                      </span>
-                    ) : null}
+                  <div className="flex items-center justify-between animate-pulse">
+                    <div className="flex items-center gap-4">
+                      <div className="w-11 h-11 rounded-2xl bg-[#ede6d8]" />
+                      <div className="space-y-2">
+                        <div className="w-48 h-4 bg-[#ede6d8] rounded" />
+                        <div className="w-28 h-3 bg-[#ede6d8] rounded" />
+                      </div>
+                    </div>
+                    <div className="w-20 h-6 bg-[#ede6d8] rounded" />
                   </div>
                 </div>
-              ))}
+              ) : filteredActivities.length === 0 ? (
+                /* Empty State Message */
+                <div className="py-14 px-6 text-center">
+                  <div className="w-12 h-12 mx-auto mb-3.5 rounded-2xl bg-[#f5ede2] border border-[#e5d8c3] flex items-center justify-center text-[#8a3d1c]">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      strokeWidth={1.5}
+                      stroke="currentColor"
+                      className="w-6 h-6"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
+                    </svg>
+                  </div>
+                  <h4 className="font-serif-luxury text-lg font-bold text-[#121214] mb-1">
+                    {activityFilter === "all"
+                      ? "No Recent Activity"
+                      : `No ${activityFilter === "creator" ? "Creator" : "Payer"} Activity`}
+                  </h4>
+                  <p className="text-xs text-[#736e65] max-w-sm mx-auto leading-relaxed">
+                    {activityFilter === "all"
+                      ? "No contributions or splits recorded yet. When members submit payments or you create new splits, activity will appear here in real time."
+                      : `You have no ${activityFilter} activity recorded yet.`}
+                  </p>
+                </div>
+              ) : (
+                filteredActivities.map((act) => (
+                  <div
+                    key={act.id}
+                    className="py-4 px-6 sm:px-7 flex items-center justify-between gap-4 hover:bg-[#faf7f0]/60 transition-colors"
+                  >
+                    {/* Left: Icon & Description */}
+                    <div className="flex items-center gap-4">
+                      {/* Activity Icon Box */}
+                      <div
+                        className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 border ${
+                          act.type === "payment_received"
+                            ? "bg-[#eefaf2] border-[#c6f0d4] text-[#15803d]"
+                            : act.type === "split_created"
+                            ? "bg-[#fef8ea] border-[#fde8b3] text-[#b45309]"
+                            : "bg-[#f0f9f4] border-[#cbece0] text-[#167d4f]"
+                        }`}
+                      >
+                        {act.type === "payment_received" ? (
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            strokeWidth={2}
+                            stroke="currentColor"
+                            className="w-4.5 h-4.5 text-[#15803d]"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M19.5 4.5l-15 15m0 0h11.25m-11.25 0V8.25"
+                            />
+                          </svg>
+                        ) : act.type === "split_created" ? (
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            strokeWidth={1.8}
+                            stroke="currentColor"
+                            className="w-4.5 h-4.5 text-[#b45309]"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"
+                            />
+                          </svg>
+                        ) : (
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            strokeWidth={2.2}
+                            stroke="currentColor"
+                            className="w-4.5 h-4.5 text-[#167d4f]"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M4.5 12.75l6 6 9-13.5"
+                            />
+                          </svg>
+                        )}
+                      </div>
+
+                      {/* Text Title & Subtitle */}
+                      <div>
+                        <h4 className="text-sm sm:text-base font-bold text-[#121214] leading-snug">
+                          {act.title}
+                        </h4>
+                        <p className="text-xs text-[#736e65] mt-0.5">
+                          {act.subtitle}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Right: Amount or Status Badge */}
+                    <div className="text-right shrink-0 flex items-center gap-3">
+                      {act.amount && (
+                        <span
+                          className={`font-serif-luxury text-2xl font-bold tracking-tight ${
+                            act.amountType === "positive"
+                              ? "text-[#8a3d1c]"
+                              : "text-[#121214]"
+                          }`}
+                        >
+                          {act.amount}
+                        </span>
+                      )}
+                      {act.statusBadge && (
+                        <span
+                          className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-full border ${
+                            act.statusBadge === "Approved"
+                              ? "bg-[#eefaf2] border-[#bbf7d0] text-[#14532d]"
+                              : act.statusBadge === "Rejected"
+                              ? "bg-[#fef2f2] border-[#fecaca] text-[#991b1b]"
+                              : "bg-[#fdf6e6] border-[#f5deaa] text-[#925413]"
+                          }`}
+                        >
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              act.statusBadge === "Approved"
+                                ? "bg-[#15803d]"
+                                : act.statusBadge === "Rejected"
+                                ? "bg-[#b91c1c]"
+                                : "bg-[#b45309]"
+                            }`}
+                          />
+                          <span>{act.statusBadge}</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>

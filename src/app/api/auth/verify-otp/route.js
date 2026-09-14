@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { verifyOtp } from "../../../../services/otp.service";
 import { validateOtpInput } from "../../../../utils/auth.validation";
-import { prisma } from "../../../../lib/prisma";
+import { prisma } from "@/lib/prisma";
+import {
+  createSessionValue,
+  SESSION_COOKIE_NAME,
+} from "../../../../services/session.service";
 
 export async function POST(request) {
   try {
@@ -34,7 +38,19 @@ export async function POST(request) {
     }
 
     const result = await verifyOtp(resolvedUserId, otp, prisma);
-    return NextResponse.json(result, { status: result.status });
+    if (!result.success) {
+      return NextResponse.json(result, { status: result.status });
+    }
+
+    const response = NextResponse.json(result, { status: result.status });
+    response.cookies.set(SESSION_COOKIE_NAME, createSessionValue(resolvedUserId), {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 60 * 60 * 24 * 7,
+      path: "/",
+    });
+    return response;
   } catch (error) {
     console.error("OTP verification API error:", error);
 
