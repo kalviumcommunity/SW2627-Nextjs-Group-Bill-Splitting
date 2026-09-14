@@ -100,6 +100,31 @@ export default function HomeDashboard({ initialUser = null }) {
   useEffect(() => {
     let isMounted = true;
 
+    async function loadCurrentUser() {
+      try {
+        const response = await fetch("/api/auth/me", { credentials: "include" });
+        if (response.status === 401) {
+          router.push("/login");
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch current user");
+        }
+
+        const data = await response.json();
+        if (data.success && data.user && isMounted) {
+          setUser(data.user);
+        }
+      } catch (err) {
+        console.warn("Could not load current user:", err.message);
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    }
+
     async function loadDashboardData() {
       try {
         const response = await fetch("/api/dashboard", { credentials: "include" });
@@ -114,9 +139,6 @@ export default function HomeDashboard({ initialUser = null }) {
 
         const data = await response.json();
         if (data.success && isMounted) {
-          if (data.user) {
-            setUser(data.user);
-          }
           if (data.stats) {
             setStats(data.stats);
           }
@@ -126,13 +148,10 @@ export default function HomeDashboard({ initialUser = null }) {
         }
       } catch (err) {
         console.warn("Could not load dashboard data from backend:", err.message);
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
       }
     }
 
+    loadCurrentUser();
     loadDashboardData();
 
     return () => {
