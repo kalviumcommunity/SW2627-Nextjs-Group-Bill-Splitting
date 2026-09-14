@@ -1,21 +1,16 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-export default function CreatorDashboard({
-  initialUser = null,
-}) {
+export default function CreatorDashboard({ initialUser = null }) {
   const router = useRouter();
+  const createSplitRef = useRef(null);
 
-  // User State
-  const [user, setUser] = useState(
-    initialUser || {
-      fullName: "Alex Rivera",
-      email: "alex.rivera@example.com",
-    }
-  );
+  // User State: loaded dynamically
+  const [user, setUser] = useState(initialUser);
+  const [isLoading, setIsLoading] = useState(!initialUser);
 
   // Search, Filter, Sort States
   const [searchQuery, setSearchQuery] = useState("");
@@ -23,18 +18,58 @@ export default function CreatorDashboard({
   const [sortBy, setSortBy] = useState("newest"); // 'newest' | 'amount_desc' | 'progress'
   const [showSortDropdown, setShowSortDropdown] = useState(false);
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
 
-  // ── Create Split Menu States (matching wireframe) ──
+  // ── Create Split Form States ──
   const [expenseTitle, setExpenseTitle] = useState("");
-  const [totalAmount, setTotalAmount] = useState("150.00");
-  const [people, setPeople] = useState([
-    { id: "p_alex", name: "Alex M.", isYou: false, amount: "75.00" },
-    { id: "p_sam", name: "Sam T.", isYou: false, amount: "75.00" },
-  ]);
+  const [totalAmount, setTotalAmount] = useState("");
+  const [people, setPeople] = useState([]);
   const [newPersonInput, setNewPersonInput] = useState("");
-  const [dueDate, setDueDate] = useState("Oct 24, 2026");
-  const [dueTime, setDueTime] = useState("12:00 PM");
+  const [emailError, setEmailError] = useState("");
+  const [createSuccessMessage, setCreateSuccessMessage] = useState("");
+  const [selectedExpense, setSelectedExpense] = useState(null);
+
+  // ── Deadline (simple datetime-local input) ──
+  const [deadline, setDeadline] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    // Format as YYYY-MM-DDTHH:MM for datetime-local
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  });
+
+  // ── Form Validation ──
+  const [formErrors, setFormErrors] = useState({});
+
+  // Created Expenses Dataset: starts empty, no stale dummy data
+  const [expenses, setExpenses] = useState([]);
+
+  // Fetch live user & creator data from backend
+  useEffect(() => {
+    let isMounted = true;
+    async function loadData() {
+      try {
+        const res = await fetch("/api/dashboard", { credentials: "include" });
+        if (res.status === 401) {
+          router.push("/login");
+          return;
+        }
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.success) {
+            if (data.user) setUser(data.user);
+          }
+        }
+      } catch (err) {
+        console.warn("Could not load creator data:", err.message);
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    }
+    loadData();
+    return () => {
+      isMounted = false;
+    };
+  }, [router]);
 
   // Assigned amounts sum & validation
   const assignedSum = useMemo(() => {
@@ -42,7 +77,8 @@ export default function CreatorDashboard({
   }, [people]);
 
   const totalNum = parseFloat(totalAmount) || 0;
-  const amountsMatch = Math.abs(assignedSum - totalNum) < 0.01 && totalNum > 0;
+  const amountsMatch =
+    totalNum > 0 && people.length > 0 && Math.abs(assignedSum - totalNum) < 0.01;
 
   // Split equally helper
   const handleSplitEqually = () => {
@@ -56,17 +92,33 @@ export default function CreatorDashboard({
     );
   };
 
-  // Add person helper
+  // Add person helper (Email only validation)
   const handleAddPerson = () => {
-    if (!newPersonInput.trim()) return;
-    const name = newPersonInput.split("@")[0].trim();
-    const formattedName = name.charAt(0).toUpperCase() + name.slice(1);
+    const trimmed = newPersonInput.trim().toLowerCase();
+    if (!trimmed) return;
+
+    // Strict email check
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmed)) {
+      setEmailError("Please enter a valid email address");
+      return;
+    }
+
+    if (people.some((p) => p.email.toLowerCase() === trimmed)) {
+      setEmailError("This email has already been added");
+      return;
+    }
+
+    setEmailError("");
+    const displayName = trimmed.split("@")[0];
+    const formattedName = displayName.charAt(0).toUpperCase() + displayName.slice(1);
+
     setPeople([
       ...people,
       {
         id: `person_${Date.now()}`,
         name: formattedName,
-        isYou: false,
+        email: trimmed,
         amount: "0.00",
       },
     ]);
@@ -78,59 +130,35 @@ export default function CreatorDashboard({
     setPeople(people.filter((p) => p.id !== id));
   };
 
-  // Change individual person amount
+  // Change individual person amount (no spin buttons)
   const handlePersonAmountChange = (id, newAmt) => {
+    // Only allow numbers and at most one decimal point
+    const clean = newAmt.replace(/[^0-9.]/g, "");
+    const parts = clean.split(".");
+    if (parts.length > 2) return;
+
     setPeople(
-      people.map((p) => (p.id === id ? { ...p, amount: newAmt } : p))
+      people.map((p) => (p.id === id ? { ...p, amount: clean } : p))
     );
   };
 
-  // Summary Metrics from Wireframe
-  const metrics = {
-    totalActiveSplits: "$12,450.00",
-    totalActiveCount: 8,
-    collectedAmount: "$8,200.00",
-    collectedCount: 8,
-    pendingAmount: "$4,250.00",
-    pendingPayersCount: 12,
-  };
+  // Dynamic Metrics computed from actual expenses (in Rupee ₹)
+  const metrics = useMemo(() => {
+    const activeExpenses = expenses.filter((e) => e.status === "Active");
+    const activeCount = activeExpenses.length;
+    const totalActive = activeExpenses.reduce((sum, e) => sum + e.totalAmount, 0);
+    const collected = expenses.reduce((sum, e) => sum + e.collectedAmount, 0);
+    const pending = activeExpenses.reduce((sum, e) => sum + e.remainingAmount, 0);
 
-  // Created Expenses Dataset matching the wireframe
-  const [expenses, setExpenses] = useState([
-    {
-      id: "exp_1",
-      title: "Bali Retreat 2024",
-      status: "Active",
-      dateLabel: "Created Oct 12",
-      createdAt: "2024-10-12",
-      totalAmount: 4000.0,
-      collectedAmount: 3000.0,
-      remainingAmount: 1000.0,
-      progress: 75,
-    },
-    {
-      id: "exp_2",
-      title: "Michelin Star Dinner",
-      status: "Active",
-      dateLabel: "Created Nov 02",
-      createdAt: "2024-11-02",
-      totalAmount: 850.0,
-      collectedAmount: 340.0,
-      remainingAmount: 510.0,
-      progress: 40,
-    },
-    {
-      id: "exp_3",
-      title: "Airbnb Lake Tahoe",
-      status: "Closed",
-      dateLabel: "Settled Sep 15",
-      createdAt: "2024-09-15",
-      totalAmount: 2400.0,
-      collectedAmount: 2400.0,
-      remainingAmount: 0.0,
-      progress: 100,
-    },
-  ]);
+    return {
+      totalActiveSplits: `₹${totalActive.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      totalActiveCount: activeCount,
+      collectedAmount: `₹${collected.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      collectedCount: expenses.length,
+      pendingAmount: `₹${pending.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      pendingPayersCount: activeExpenses.reduce((sum, e) => sum + (e.memberCount || 0), 0),
+    };
+  }, [expenses]);
 
   // Filtered and Sorted Expenses
   const filteredExpenses = useMemo(() => {
@@ -151,44 +179,101 @@ export default function CreatorDashboard({
       });
   }, [expenses, searchQuery, statusFilter, sortBy]);
 
+  // ── Validate Form ──
+  const validateForm = () => {
+    const errors = {};
+    if (!expenseTitle.trim()) errors.title = "Split name is required.";
+    if (!totalAmount || totalNum <= 0) errors.amount = "Total amount must be greater than ₹0.";
+    if (people.length === 0) errors.people = "Add at least one member.";
+    if (people.length > 0 && !amountsMatch) errors.match = "Member shares must equal the total amount.";
+    if (!deadline) {
+      errors.deadline = "Deadline is required.";
+    } else if (new Date(deadline) <= new Date()) {
+      errors.deadline = "Deadline must be in the future.";
+    }
+    return errors;
+  };
+
+  // Handle Form Submission
   const handleCreateSplitSubmit = (e) => {
     e.preventDefault();
-    if (!amountsMatch || !expenseTitle.trim()) return;
+    const errors = validateForm();
+    setFormErrors(errors);
+    if (Object.keys(errors).length > 0) return;
 
-    const youAmount = parseFloat(people.find((p) => p.isYou)?.amount || 0);
+    const deadlineDate = new Date(deadline);
+    const formattedDeadline = deadlineDate.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }) + " at " + deadlineDate.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
     const newEntry = {
       id: `exp_${Date.now()}`,
-      title: expenseTitle,
+      title: expenseTitle.trim(),
       status: "Active",
-      dateLabel: "Created Just now",
+      dateLabel: `Due ${deadlineDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`,
       createdAt: new Date().toISOString(),
+      deadline: formattedDeadline,
       totalAmount: totalNum,
-      collectedAmount: youAmount,
-      remainingAmount: totalNum - youAmount,
-      progress: Math.min(100, Math.round((youAmount / totalNum) * 100)),
+      collectedAmount: 0.0,
+      remainingAmount: totalNum,
+      progress: 0,
+      memberCount: people.length,
+      members: people.map((p) => ({
+        name: p.name,
+        email: p.email,
+        amount: parseFloat(p.amount) || 0,
+      })),
     };
 
     setExpenses([newEntry, ...expenses]);
-    setShowCreateModal(false);
+    setCreateSuccessMessage(`Split "${expenseTitle}" created successfully!`);
+
+    // Reset form
+    setExpenseTitle("");
+    setTotalAmount("");
+    setPeople([]);
+    setNewPersonInput("");
+    setFormErrors({});
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    const pad = (n) => String(n).padStart(2, "0");
+    setDeadline(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
+
+    setTimeout(() => {
+      setCreateSuccessMessage("");
+    }, 4000);
   };
 
   const handleLogout = async () => {
     try {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      router.push("/login");
+      await fetch("/api/auth/logout", { method: "POST" });
     } catch (err) {
+      // ignore
+    } finally {
       router.push("/login");
     }
   };
 
   const getUserInitials = (name) => {
-    if (!name) return "AR";
+    if (!name || !name.trim()) return "•";
     const parts = name.trim().split(/\s+/);
     if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   };
 
-  const userInitials = getUserInitials(user?.fullName || "Alex Rivera");
+  const userInitials = getUserInitials(user?.fullName || user?.name || "");
+
+  // Minimum datetime value for deadline input (current moment)
+  const minDeadline = useMemo(() => {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  }, []);
 
   return (
     <div className="min-h-screen md:h-screen w-full flex flex-col md:flex-row bg-[#f8f5ee] text-[#121214] font-sans md:overflow-hidden">
@@ -296,31 +381,10 @@ export default function CreatorDashboard({
           2. MAIN CONTENT AREA (Scrollable Content)
          ─────────────────────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col min-w-0 md:h-full md:overflow-y-auto">
-        {/* Top Header - No left 'Split' text, only right items */}
+        {/* Top Header */}
         <header className="w-full bg-transparent px-6 sm:px-10 lg:px-12 pt-4 pb-2 flex items-center justify-end">
-          {/* Right Header: Notification Bell & Initials Profile Avatar */}
           <div className="flex items-center gap-3">
-            <button
-              type="button"
-              className="w-10 h-10 rounded-full bg-white border border-[#ded6c7] text-[#121214] flex items-center justify-center hover:bg-[#faf7f0] hover:shadow-xs transition-all cursor-pointer shadow-2xs"
-              aria-label="Notifications"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                strokeWidth={1.75}
-                stroke="currentColor"
-                className="w-4 h-4"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0"
-                />
-              </svg>
-            </button>
-
+            {/* Profile Avatar with Border & Dynamic Initials */}
             <div
               className="w-10 h-10 rounded-full bg-[#121214] text-white flex items-center justify-center font-bold text-xs tracking-wider border-2 border-[#ded6c7] hover:border-[#121214] transition-colors cursor-pointer shadow-2xs"
               title={`${user?.fullName || "User"} (${user?.email || ""})`}
@@ -331,22 +395,24 @@ export default function CreatorDashboard({
         </header>
 
         {/* Dashboard Content Container */}
-        <div className="flex-1 px-6 sm:px-10 lg:px-12 pb-12 space-y-8 max-w-5xl w-full">
-          {/* Page Title & Action Bar */}
+        <div className="flex-1 px-6 sm:px-10 lg:px-12 pb-16 space-y-8 max-w-5xl w-full">
+          {/* Page Title & Smooth Scroll Action */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
             <div>
               <h2 className="font-serif-luxury text-3xl sm:text-4xl lg:text-[44px] font-bold tracking-tight text-[#121214] leading-tight">
                 Creator Dashboard
               </h2>
               <p className="text-xs sm:text-sm text-[#605c52] font-normal leading-relaxed mt-1">
-                Manage and track your active splits.
+                Manage and track your active splits with clarity.
               </p>
             </div>
 
-            {/* Create New Split Button - Rich Terracotta Accent (#8a3d1c) */}
+            {/* Create New Split Button: Smoothly scrolls page down to the section */}
             <button
               type="button"
-              onClick={() => setShowCreateModal(true)}
+              onClick={() => {
+                createSplitRef.current?.scrollIntoView({ behavior: "smooth" });
+              }}
               className="inline-flex items-center justify-center gap-2 bg-[#8a3d1c] hover:bg-[#733317] text-white text-xs sm:text-sm font-semibold px-4 sm:px-5 py-2.5 sm:py-3 rounded-xl transition-all shadow-sm hover:shadow-md cursor-pointer shrink-0"
             >
               <span className="flex items-center justify-center w-4 h-4 rounded-full border border-white/50 text-xs leading-none">
@@ -356,8 +422,16 @@ export default function CreatorDashboard({
             </button>
           </div>
 
+          {/* Feedback Banner upon Creation */}
+          {createSuccessMessage && (
+            <div className="p-4 rounded-2xl bg-[#f2faf4] border border-[#bbf7d0] text-[#14532d] text-xs font-semibold flex items-center gap-2.5 shadow-sm animate-in fade-in">
+              <span className="text-sm">✓</span>
+              <span>{createSuccessMessage}</span>
+            </div>
+          )}
+
           {/* ───────────────────────────────────────────────────────────
-              METRIC CARDS (3-column layout matching wireframe)
+              METRIC CARDS (3-column layout with Rupee ₹)
              ─────────────────────────────────────────────────────────── */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6">
             {/* Card 1: TOTAL ACTIVE SPLITS */}
@@ -383,7 +457,7 @@ export default function CreatorDashboard({
                   </span>
                 </div>
                 <div className="font-serif-luxury text-3xl sm:text-4xl font-bold tracking-tight text-[#121214]">
-                  {metrics.totalActiveSplits}
+                  {isLoading ? "—" : metrics.totalActiveSplits}
                 </div>
               </div>
               <p className="text-xs text-[#736e65] mt-4 font-normal">
@@ -414,11 +488,11 @@ export default function CreatorDashboard({
                   </span>
                 </div>
                 <div className="font-serif-luxury text-3xl sm:text-4xl font-bold tracking-tight text-[#8a3d1c]">
-                  {metrics.collectedAmount}
+                  {isLoading ? "—" : metrics.collectedAmount}
                 </div>
               </div>
               <p className="text-xs text-[#736e65] mt-4 font-normal">
-                Across {metrics.collectedCount} active expenses
+                Across {metrics.collectedCount} expenses
               </p>
             </div>
 
@@ -445,11 +519,11 @@ export default function CreatorDashboard({
                   </span>
                 </div>
                 <div className="font-serif-luxury text-3xl sm:text-4xl font-bold tracking-tight text-[#121214]">
-                  {metrics.pendingAmount}
+                  {isLoading ? "—" : metrics.pendingAmount}
                 </div>
               </div>
               <p className="text-xs text-[#736e65] mt-4 font-normal">
-                From {metrics.pendingPayersCount} payers
+                From {metrics.pendingPayersCount} assigned members
               </p>
             </div>
           </div>
@@ -458,7 +532,6 @@ export default function CreatorDashboard({
               CREATED EXPENSES LIST SECTION
              ─────────────────────────────────────────────────────────── */}
           <div className="space-y-4 pt-2">
-            {/* Header with Title and Search/Sort/Filter Tools */}
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
               <h3 className="font-serif-luxury text-2xl sm:text-3xl font-bold tracking-tight text-[#121214]">
                 Created Expenses
@@ -466,7 +539,7 @@ export default function CreatorDashboard({
 
               {/* Search, Sort, Filter Controls */}
               <div className="flex flex-wrap items-center gap-2.5">
-                {/* Search input with icon */}
+                {/* Search */}
                 <div className="relative min-w-[220px] sm:min-w-[260px]">
                   <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-[#9a9386]">
                     <svg
@@ -493,7 +566,7 @@ export default function CreatorDashboard({
                   />
                 </div>
 
-                {/* Sort Button & Dropdown */}
+                {/* Sort Dropdown */}
                 <div className="relative">
                   <button
                     type="button"
@@ -511,11 +584,7 @@ export default function CreatorDashboard({
                       stroke="currentColor"
                       className="w-3.5 h-3.5"
                     >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M3 7.5h18M3 12h12m-12 4.5h6"
-                      />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5h18M3 12h12m-12 4.5h6" />
                     </svg>
                     <span>Sort</span>
                   </button>
@@ -562,7 +631,7 @@ export default function CreatorDashboard({
                   )}
                 </div>
 
-                {/* Filter Button & Dropdown */}
+                {/* Filter Dropdown */}
                 <div className="relative">
                   <button
                     type="button"
@@ -633,20 +702,57 @@ export default function CreatorDashboard({
               </div>
             </div>
 
-            {/* Expense Cards List */}
+            {/* Expense Cards List / Placeholder Message */}
             <div className="space-y-4">
-              {filteredExpenses.length === 0 ? (
-                <div className="bg-white rounded-3xl p-10 border border-[#dfd7c8] text-center">
-                  <p className="text-sm text-[#736e65]">No expenses found matching your filter.</p>
+              {expenses.length === 0 ? (
+                /* Primary Empty State */
+                <div className="bg-white rounded-3xl p-10 sm:p-12 border border-[#dfd7c8] text-center shadow-xs">
+                  <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-[#f5ede2] border border-[#e5d8c3] flex items-center justify-center text-[#8a3d1c]">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      strokeWidth={1.5}
+                      stroke="currentColor"
+                      className="w-7 h-7"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"
+                      />
+                    </svg>
+                  </div>
+                  <h4 className="font-serif-luxury text-2xl font-bold text-[#121214] mb-2">
+                    No Created Expenses Yet
+                  </h4>
+                  <p className="text-xs sm:text-sm text-[#736e65] max-w-md mx-auto leading-relaxed mb-6">
+                    You haven&apos;t created any group splits yet. Use the Create New Split section below to set up a bill, add members by email, and track incoming payments in real time.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => createSplitRef.current?.scrollIntoView({ behavior: "smooth" })}
+                    className="inline-flex items-center gap-2 bg-[#8a3d1c] hover:bg-[#733317] text-white text-xs font-bold px-5 py-3 rounded-xl transition-all shadow-sm cursor-pointer uppercase tracking-wider"
+                  >
+                    <span>+ Create First Split</span>
+                  </button>
+                </div>
+              ) : filteredExpenses.length === 0 ? (
+                /* Filter Empty State */
+                <div className="bg-white rounded-3xl p-10 border border-[#dfd7c8] text-center shadow-xs">
+                  <p className="text-sm font-medium text-[#736e65]">
+                    No expenses found matching &quot;{searchQuery}&quot;.
+                  </p>
                 </div>
               ) : (
                 filteredExpenses.map((exp) => (
                   <div
                     key={exp.id}
-                    className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-6 lg:p-7 border border-[#dfd7c8] shadow-[0_6px_20px_-10px_rgba(40,30,15,0.03)] hover:shadow-[0_16px_35px_-12px_rgba(40,30,15,0.08)] hover:-translate-y-0.5 transition-all duration-300"
+                    onClick={() => setSelectedExpense(exp)}
+                    className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-6 lg:p-7 border border-[#dfd7c8] shadow-[0_6px_20px_-10px_rgba(40,30,15,0.03)] hover:shadow-[0_16px_35px_-12px_rgba(40,30,15,0.08)] hover:-translate-y-0.5 transition-all duration-300 cursor-pointer"
                   >
                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                      {/* Left: Title + Status Badge + Date */}
+                      {/* Left: Title + Status + Date */}
                       <div className="md:w-1/4 shrink-0">
                         <h4 className="font-bold text-base sm:text-lg text-[#121214] tracking-tight">
                           {exp.title}
@@ -667,14 +773,13 @@ export default function CreatorDashboard({
                         </div>
                       </div>
 
-                      {/* Middle: Collection Progress with Bar */}
+                      {/* Middle: Progress */}
                       <div className="flex-1 md:px-6">
                         <div className="flex items-center justify-between text-xs mb-2">
                           <span className="text-[#736e65] font-medium">Collection Progress</span>
                           <span className="font-bold text-[#121214]">{exp.progress}%</span>
                         </div>
 
-                        {/* Progress Track */}
                         <div className="w-full h-2 rounded-full bg-[#f0ebd9] overflow-hidden">
                           <div
                             className={`h-full rounded-full transition-all duration-500 ${
@@ -684,21 +789,20 @@ export default function CreatorDashboard({
                           />
                         </div>
 
-                        {/* Progress Subtext */}
                         <div className="flex items-center justify-between text-[11px] text-[#736e65] mt-2">
                           <span>
-                            ${exp.collectedAmount.toLocaleString(undefined, { minimumFractionDigits: 0 })} collected
+                            ₹{exp.collectedAmount.toLocaleString("en-IN", { minimumFractionDigits: 0 })} collected
                           </span>
                           <span>
-                            ${exp.remainingAmount.toLocaleString(undefined, { minimumFractionDigits: 0 })} remaining
+                            ₹{exp.remainingAmount.toLocaleString("en-IN", { minimumFractionDigits: 0 })} remaining
                           </span>
                         </div>
                       </div>
 
-                      {/* Right: Total Amount */}
+                      {/* Right: Total in Rupee ₹ */}
                       <div className="text-left md:text-right md:w-1/4 shrink-0">
                         <div className="font-serif-luxury text-2xl sm:text-3xl font-bold tracking-tight text-[#121214]">
-                          ${exp.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          ₹{exp.totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                         <span className="block text-[10px] uppercase tracking-wider text-[#8a8477] font-semibold mt-0.5">
                           Total Amount
@@ -710,316 +814,548 @@ export default function CreatorDashboard({
               )}
             </div>
           </div>
-        </div>
-      </main>
 
-      {/* ───────────────────────────────────────────────────────────
-          MODAL: CREATE NEW SPLIT MENU (Matching Wireframe Image)
-         ─────────────────────────────────────────────────────────── */}
-      {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs p-4 sm:p-6 overflow-y-auto">
-          <div className="bg-white rounded-3xl p-6 sm:p-10 max-w-2xl w-full border border-[#dfd7c8] shadow-2xl animate-in fade-in zoom-in-95 duration-200 max-h-[92vh] overflow-y-auto relative my-auto">
-            {/* Header: Large luxury title & Subtitle */}
-            <div className="mb-8">
-              <div className="flex items-start justify-between gap-4">
-                <input
-                  type="text"
-                  value={expenseTitle}
-                  onChange={(e) => setExpenseTitle(e.target.value)}
-                  placeholder="Split Name"
-                  className="font-serif-luxury text-3xl sm:text-5xl font-bold tracking-tight text-[#121214] placeholder-[#a8a193] bg-transparent border-b border-[#ded6c7] pb-1 w-full focus:outline-none focus:border-[#121214]"
-                />
+          {/* ───────────────────────────────────────────────────────────
+              SPLIT DETAIL VIEW (Shown when an expense card is clicked)
+             ─────────────────────────────────────────────────────────── */}
+          {selectedExpense && (
+            <div className="fixed inset-0 z-50 bg-[#f8f5ee] overflow-y-auto">
+              <div className="max-w-4xl mx-auto px-6 sm:px-10 lg:px-12 py-8">
+                {/* Back Button */}
                 <button
                   type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="text-[#9a9386] hover:text-[#121214] text-2xl font-bold p-1 cursor-pointer shrink-0"
-                  aria-label="Close"
+                  onClick={() => setSelectedExpense(null)}
+                  className="inline-flex items-center gap-2 text-sm font-semibold text-[#6c685f] hover:text-[#121214] transition-colors cursor-pointer mb-6 group"
                 >
-                  ✕
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+                  </svg>
+                  <span>Back to Dashboard</span>
                 </button>
-              </div>
-              <p className="text-xs sm:text-sm text-[#736e65] mt-2">
-                Break down costs seamlessly.
-              </p>
-            </div>
 
-            {/* Stepper Flow with Vertical Connector Line */}
-            <form onSubmit={handleCreateSplitSubmit} className="space-y-6">
-              <div className="relative pl-9 sm:pl-10 space-y-6">
-                {/* Vertical Timeline Guide Line */}
-                <div className="absolute left-[15px] sm:left-[17px] top-4 bottom-6 w-[2px] bg-[#e8dfcf]" />
-
-                {/* ── STEP 1: People Card ── */}
-                <div className="relative">
-                  {/* Step Node Icon: Checkmark Circle */}
-                  <div className="absolute -left-[35px] sm:-left-[38px] top-3 w-7 h-7 rounded-full bg-white border border-[#ded6c7] text-[#121214] flex items-center justify-center text-xs font-bold shadow-2xs z-10">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={2.5}
-                      className="w-3.5 h-3.5 text-[#167d4f]"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                    </svg>
-                  </div>
-
-                  <div className="bg-[#fbf9f4] rounded-2xl p-5 sm:p-6 border border-[#e8dfcf]">
-                    <h4 className="font-serif-luxury text-xl sm:text-2xl font-bold text-[#121214] mb-3.5">
-                      People
-                    </h4>
-
-                    {/* Participant Chips */}
-                    <div className="flex flex-wrap items-center gap-2 mb-4">
-                      {people.map((person) => (
-                        <div
-                          key={person.id}
-                          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-[#ded6c7] shadow-2xs text-xs font-semibold text-[#121214]"
-                        >
-                          <div className="w-5 h-5 rounded-full bg-[#121214] text-white flex items-center justify-center text-[10px] font-bold">
-                            {person.name.slice(0, 2).toUpperCase()}
-                          </div>
-                          <span>{person.name}</span>
-                          <button
-                            type="button"
-                            onClick={() => handleRemovePerson(person.id)}
-                            className="text-[#9a9386] hover:text-[#e74c3c] font-bold text-sm ml-0.5 cursor-pointer leading-none"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Add person input */}
+                {/* Split Header */}
+                <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#dfd7c8] shadow-xs mb-6">
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
                     <div>
-                      <label className="block text-[11px] uppercase tracking-wider font-semibold text-[#8a8477] mb-1.5">
-                        Add by email or username
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={newPersonInput}
-                          onChange={(e) => setNewPersonInput(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              handleAddPerson();
-                            }
-                          }}
-                          placeholder="e.g., alex@example.com"
-                          className="flex-1 bg-white border border-[#ded6c7] rounded-xl px-3.5 py-2 text-xs text-[#121214] placeholder-[#9a9386] focus:outline-none focus:border-[#121214]"
-                        />
-                        <button
-                          type="button"
-                          onClick={handleAddPerson}
-                          className="bg-white hover:bg-[#faf7f0] border border-[#ded6c7] rounded-xl px-4 py-2 text-xs font-bold text-[#121214] cursor-pointer transition-colors shadow-2xs"
+                      <div className="flex items-center gap-2.5 mb-2">
+                        <span
+                          className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-md ${
+                            selectedExpense.status === "Active"
+                              ? "bg-[#7a3b1d] text-white"
+                              : "bg-[#706c64] text-white"
+                          }`}
                         >
-                          + Add
-                        </button>
+                          {selectedExpense.status}
+                        </span>
+                        <span className="text-xs text-[#736e65]">
+                          {selectedExpense.dateLabel}
+                        </span>
                       </div>
+                      <h2 className="font-serif-luxury text-3xl sm:text-4xl font-bold tracking-tight text-[#121214] leading-tight">
+                        {selectedExpense.title}
+                      </h2>
+                      {selectedExpense.deadline && (
+                        <p className="text-xs text-[#736e65] mt-1.5 font-medium">
+                          📅 Deadline: {selectedExpense.deadline}
+                        </p>
+                      )}
+                      <p className="text-xs text-[#8a8477] mt-1">
+                        Created {new Date(selectedExpense.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                      </p>
+                    </div>
+                    <div className="text-left sm:text-right shrink-0">
+                      <div className="font-serif-luxury text-3xl sm:text-4xl font-bold tracking-tight text-[#121214]">
+                        ₹{selectedExpense.totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                      <span className="text-[10px] uppercase tracking-wider text-[#8a8477] font-semibold">
+                        Total Amount
+                      </span>
                     </div>
                   </div>
-                </div>
 
-                {/* ── STEP 2: Total Amount Card ── */}
-                <div className="relative">
-                  {/* Step Node Icon: Checkmark Circle */}
-                  <div className="absolute -left-[35px] sm:-left-[38px] top-3 w-7 h-7 rounded-full bg-white border border-[#ded6c7] text-[#121214] flex items-center justify-center text-xs font-bold shadow-2xs z-10">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={2.5}
-                      className="w-3.5 h-3.5 text-[#167d4f]"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                    </svg>
-                  </div>
-
-                  <div className="bg-[#fbf9f4] rounded-2xl p-5 sm:p-6 border border-[#e8dfcf]">
-                    <h4 className="font-serif-luxury text-xl sm:text-2xl font-bold text-[#121214] mb-2">
-                      Total Amount
-                    </h4>
-
-                    <div className="flex items-baseline gap-2 py-2 border-b border-[#ded6c7]">
-                      <span className="font-serif-luxury text-3xl sm:text-4xl font-bold text-[#121214]">
-                        $
-                      </span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={totalAmount}
-                        onChange={(e) => setTotalAmount(e.target.value)}
-                        placeholder="150.00"
-                        className="font-serif-luxury text-4xl sm:text-5xl font-bold tracking-tight text-[#121214] bg-transparent focus:outline-none w-full"
+                  {/* Progress Bar */}
+                  <div className="mt-6 pt-5 border-t border-[#eee7da]">
+                    <div className="flex items-center justify-between text-xs mb-2">
+                      <span className="text-[#736e65] font-medium">Collection Progress</span>
+                      <span className="font-bold text-[#121214]">{selectedExpense.progress}%</span>
+                    </div>
+                    <div className="w-full h-3 rounded-full bg-[#f0ebd9] overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${
+                          selectedExpense.status === "Closed" ? "bg-[#706c64]" : "bg-[#121214]"
+                        }`}
+                        style={{ width: `${selectedExpense.progress}%` }}
                       />
                     </div>
-                    <p className="text-xs text-[#8a8477] font-medium mt-2">
-                      Paid by You
-                    </p>
+                  </div>
+
+                  {/* Summary Metrics Row */}
+                  <div className="grid grid-cols-3 gap-4 mt-5">
+                    <div className="bg-[#fbf9f4] rounded-xl p-4 border border-[#e8dfcf] text-center">
+                      <span className="block text-[10px] uppercase tracking-wider font-semibold text-[#8a8477] mb-1">
+                        Collected
+                      </span>
+                      <span className="text-lg sm:text-xl font-bold text-[#15803d]">
+                        ₹{selectedExpense.collectedAmount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <div className="bg-[#fbf9f4] rounded-xl p-4 border border-[#e8dfcf] text-center">
+                      <span className="block text-[10px] uppercase tracking-wider font-semibold text-[#8a8477] mb-1">
+                        Remaining
+                      </span>
+                      <span className="text-lg sm:text-xl font-bold text-[#8a3d1c]">
+                        ₹{selectedExpense.remainingAmount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <div className="bg-[#fbf9f4] rounded-xl p-4 border border-[#e8dfcf] text-center">
+                      <span className="block text-[10px] uppercase tracking-wider font-semibold text-[#8a8477] mb-1">
+                        Members
+                      </span>
+                      <span className="text-lg sm:text-xl font-bold text-[#121214]">
+                        {selectedExpense.members?.length || 0}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
-                {/* ── STEP 3: Split Details Card ── */}
-                <div className="relative">
-                  {/* Step Node Icon: Active dark circle with 3 */}
-                  <div className="absolute -left-[35px] sm:-left-[38px] top-3 w-7 h-7 rounded-full bg-[#121214] text-white flex items-center justify-center text-xs font-bold shadow-2xs z-10">
-                    3
+                {/* Members Contribution Table */}
+                <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#dfd7c8] shadow-xs">
+                  <h3 className="font-serif-luxury text-2xl sm:text-3xl font-bold tracking-tight text-[#121214] mb-1">
+                    Member Contributions
+                  </h3>
+                  <p className="text-xs text-[#736e65] mb-6">
+                    Track each member&apos;s assigned share and payment status.
+                  </p>
+
+                  {!selectedExpense.members || selectedExpense.members.length === 0 ? (
+                    <div className="text-center py-8">
+                      <p className="text-sm text-[#736e65]">No members assigned to this split.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {/* Table Header */}
+                      <div className="hidden sm:grid sm:grid-cols-12 gap-4 px-4 py-2 text-[10px] uppercase tracking-wider font-bold text-[#8a8477]">
+                        <div className="col-span-4">Member</div>
+                        <div className="col-span-2 text-right">Assigned</div>
+                        <div className="col-span-2 text-right">Paid</div>
+                        <div className="col-span-2 text-right">Remaining</div>
+                        <div className="col-span-2 text-right">Status</div>
+                      </div>
+
+                      {/* Member Rows */}
+                      {selectedExpense.members.map((member, idx) => {
+                        const assignedAmt = member.amount || 0;
+                        const paidAmt = member.paidAmount || 0;
+                        const memberRemaining = Math.max(0, assignedAmt - paidAmt);
+                        const memberProgress = assignedAmt > 0 ? Math.min(100, Math.round((paidAmt / assignedAmt) * 100)) : 0;
+
+                        let statusLabel = "Pending";
+                        let statusColor = "bg-[#fef3c7] text-[#92400e]";
+                        if (memberRemaining <= 0 && assignedAmt > 0) {
+                          statusLabel = "Settled";
+                          statusColor = "bg-[#dcfce7] text-[#166534]";
+                        } else if (paidAmt > 0) {
+                          statusLabel = "Partial";
+                          statusColor = "bg-[#dbeafe] text-[#1e40af]";
+                        }
+
+                        return (
+                          <div
+                            key={idx}
+                            className="bg-[#fbf9f4] rounded-2xl p-4 sm:p-5 border border-[#e8dfcf] hover:border-[#ded6c7] transition-colors"
+                          >
+                            <div className="sm:grid sm:grid-cols-12 sm:gap-4 sm:items-center">
+                              {/* Member Identity */}
+                              <div className="col-span-4 flex items-center gap-3 mb-3 sm:mb-0">
+                                <div className="w-9 h-9 rounded-full bg-[#121214] text-white flex items-center justify-center text-xs font-bold shadow-2xs shrink-0">
+                                  {member.email ? member.email.slice(0, 2).toUpperCase() : member.name?.slice(0, 2).toUpperCase() || "??"}
+                                </div>
+                                <div className="min-w-0">
+                                  <span className="text-sm font-semibold text-[#121214] block truncate">
+                                    {member.name}
+                                  </span>
+                                  <span className="text-[11px] text-[#736e65] block truncate">
+                                    {member.email}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Assigned */}
+                              <div className="col-span-2 text-right mb-2 sm:mb-0">
+                                <span className="sm:hidden text-[10px] uppercase tracking-wider font-semibold text-[#8a8477] mr-2">Assigned: </span>
+                                <span className="text-sm font-bold text-[#121214]">
+                                  ₹{assignedAmt.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              </div>
+
+                              {/* Paid */}
+                              <div className="col-span-2 text-right mb-2 sm:mb-0">
+                                <span className="sm:hidden text-[10px] uppercase tracking-wider font-semibold text-[#8a8477] mr-2">Paid: </span>
+                                <span className="text-sm font-bold text-[#15803d]">
+                                  ₹{paidAmt.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              </div>
+
+                              {/* Remaining */}
+                              <div className="col-span-2 text-right mb-2 sm:mb-0">
+                                <span className="sm:hidden text-[10px] uppercase tracking-wider font-semibold text-[#8a8477] mr-2">Remaining: </span>
+                                <span className={`text-sm font-bold ${memberRemaining > 0 ? "text-[#8a3d1c]" : "text-[#15803d]"}`}>
+                                  ₹{memberRemaining.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              </div>
+
+                              {/* Status Badge */}
+                              <div className="col-span-2 text-right">
+                                <span className={`inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-lg ${statusColor}`}>
+                                  {statusLabel}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Mini Progress Bar */}
+                            <div className="mt-3 flex items-center gap-2">
+                              <div className="flex-1 h-1.5 rounded-full bg-[#f0ebd9] overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full transition-all duration-500 ${
+                                    memberRemaining <= 0 ? "bg-[#15803d]" : paidAmt > 0 ? "bg-[#3b82f6]" : "bg-[#d4a574]"
+                                  }`}
+                                  style={{ width: `${memberProgress}%` }}
+                                />
+                              </div>
+                              <span className="text-[10px] font-semibold text-[#8a8477] w-8 text-right">
+                                {memberProgress}%
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ───────────────────────────────────────────────────────────
+              CREATE NEW SPLIT SECTION (Inline On-Page Component with Smooth Scrolling)
+             ─────────────────────────────────────────────────────────── */}
+          <section
+            ref={createSplitRef}
+            className="pt-6 border-t border-[#ded6c7]"
+          >
+            <div className="bg-white rounded-3xl p-6 sm:p-10 border border-[#dfd7c8] shadow-[0_15px_40px_-15px_rgba(40,30,15,0.06)]">
+              {/* Header */}
+              <div className="mb-8">
+                <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-2 border-b border-[#ded6c7] pb-2">
+                  <input
+                    type="text"
+                    value={expenseTitle}
+                    onChange={(e) => setExpenseTitle(e.target.value)}
+                    placeholder="Enter Split Name (e.g., Goa Trip, Dinner)"
+                    className="font-serif-luxury text-3xl sm:text-4xl font-bold tracking-tight text-[#121214] placeholder-[#a8a193] bg-transparent w-full focus:outline-none"
+                  />
+                  <span className="text-[11px] uppercase tracking-wider text-[#8a8477] font-bold shrink-0">
+                    Step-by-step
+                  </span>
+                </div>
+                <p className="text-xs sm:text-sm text-[#736e65] mt-2">
+                  Break down shared costs and allocate shares seamlessly.
+                </p>
+              </div>
+
+              {/* Stepper Flow with Vertical Line */}
+              <form onSubmit={handleCreateSplitSubmit} className="space-y-6">
+                <div className="relative pl-9 sm:pl-10 space-y-6">
+                  {/* Vertical Timeline Guide Line */}
+                  <div className="absolute left-[15px] sm:left-[17px] top-4 bottom-6 w-[2px] bg-[#e8dfcf]" />
+
+                  {/* ── STEP 1: People Card (Add by email only) ── */}
+                  <div className="relative">
+                    <div className="absolute -left-[35px] sm:-left-[38px] top-3 w-7 h-7 rounded-full bg-white border border-[#ded6c7] text-[#121214] flex items-center justify-center text-xs font-bold shadow-2xs z-10">
+                      1
+                    </div>
+
+                    <div className="bg-[#fbf9f4] rounded-2xl p-5 sm:p-6 border border-[#e8dfcf]">
+                      <h4 className="font-serif-luxury text-xl sm:text-2xl font-bold text-[#121214] mb-1">
+                        People
+                      </h4>
+                      <p className="text-xs text-[#736e65] mb-3.5">
+                        Add members to this split using their verified email address.
+                      </p>
+
+                      {/* Participant Chips */}
+                      {people.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-2 mb-4">
+                          {people.map((person) => (
+                            <div
+                              key={person.id}
+                              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-[#ded6c7] shadow-2xs text-xs font-semibold text-[#121214]"
+                            >
+                              <div className="w-5 h-5 rounded-full bg-[#121214] text-white flex items-center justify-center text-[10px] font-bold">
+                                {person.email.slice(0, 2).toUpperCase()}
+                              </div>
+                              <span className="font-medium text-[#4e4a40]">{person.email}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleRemovePerson(person.id)}
+                                className="text-[#9a9386] hover:text-[#e74c3c] font-bold text-sm ml-1 cursor-pointer leading-none"
+                                title="Remove participant"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Add person input (EMAIL ONLY) */}
+                      <div>
+                        <label className="block text-[11px] uppercase tracking-wider font-semibold text-[#8a8477] mb-1.5">
+                          Add by email
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="email"
+                            value={newPersonInput}
+                            onChange={(e) => {
+                              setNewPersonInput(e.target.value);
+                              if (emailError) setEmailError("");
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                handleAddPerson();
+                              }
+                            }}
+                            placeholder="name@example.com"
+                            className="flex-1 bg-white border border-[#ded6c7] rounded-xl px-3.5 py-2.5 text-xs text-[#121214] placeholder-[#9a9386] focus:outline-none focus:border-[#121214]"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAddPerson}
+                            className="bg-white hover:bg-[#faf7f0] border border-[#ded6c7] rounded-xl px-4 py-2.5 text-xs font-bold text-[#121214] cursor-pointer transition-colors shadow-2xs shrink-0"
+                          >
+                            + Add Person
+                          </button>
+                        </div>
+                        {emailError && (
+                          <p className="text-[11px] text-[#d9383a] font-medium mt-1.5 flex items-center gap-1">
+                            <span>⚠</span> {emailError}
+                          </p>
+                        )}
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="bg-[#fbf9f4] rounded-2xl p-5 sm:p-6 border border-[#e8dfcf]">
-                    <div className="flex items-center justify-between mb-4">
-                      <h4 className="font-serif-luxury text-xl sm:text-2xl font-bold text-[#121214]">
-                        Split Details
+                  {/* ── STEP 2: Total Amount Card (Rupee ₹ and no spin arrows) ── */}
+                  <div className="relative">
+                    <div className="absolute -left-[35px] sm:-left-[38px] top-3 w-7 h-7 rounded-full bg-white border border-[#ded6c7] text-[#121214] flex items-center justify-center text-xs font-bold shadow-2xs z-10">
+                      2
+                    </div>
+
+                    <div className="bg-[#fbf9f4] rounded-2xl p-5 sm:p-6 border border-[#e8dfcf]">
+                      <h4 className="font-serif-luxury text-xl sm:text-2xl font-bold text-[#121214] mb-2">
+                        Total Amount
                       </h4>
-                      <button
-                        type="button"
-                        onClick={handleSplitEqually}
-                        className="text-xs font-bold text-[#121214] hover:text-[#8a3d1c] hover:underline cursor-pointer transition-colors"
-                      >
-                        Split Equally
-                      </button>
+
+                      <div className="flex items-baseline gap-2 py-2 border-b border-[#ded6c7]">
+                        <span className="font-serif-luxury text-3xl sm:text-4xl font-bold text-[#121214]">
+                          ₹
+                        </span>
+                        {/* Decimal input without spin up/down buttons */}
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={totalAmount}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/[^0-9.]/g, "");
+                            const parts = val.split(".");
+                            if (parts.length > 2) return;
+                            setTotalAmount(val);
+                          }}
+                          placeholder="0.00"
+                          className="font-serif-luxury text-4xl sm:text-5xl font-bold tracking-tight text-[#121214] bg-transparent focus:outline-none w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        />
+                      </div>
+                      <p className="text-xs text-[#8a8477] font-medium mt-2">
+                        Total expense amount paid by you as creator
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* ── STEP 3: Split Details Card (Rupee ₹ and no spin arrows) ── */}
+                  <div className="relative">
+                    <div className="absolute -left-[35px] sm:-left-[38px] top-3 w-7 h-7 rounded-full bg-[#121214] text-white flex items-center justify-center text-xs font-bold shadow-2xs z-10">
+                      3
                     </div>
 
-                    {/* Participant split breakdown rows */}
-                    <div className="space-y-3">
-                      {people.map((person) => (
-                        <div
-                          key={person.id}
-                          className="flex items-center justify-between gap-4 py-1"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-[#121214] text-white flex items-center justify-center text-xs font-bold shadow-2xs">
-                              {person.name.slice(0, 2).toUpperCase()}
-                            </div>
-                            <span className="text-sm font-semibold text-[#121214]">
-                              {person.name}
-                            </span>
-                          </div>
-
-                          <div className="flex items-center gap-1">
-                            <span className="text-sm text-[#736e65]">$</span>
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={person.amount}
-                              onChange={(e) =>
-                                handlePersonAmountChange(person.id, e.target.value)
-                              }
-                              className={`w-24 text-right px-2 py-1 text-sm font-semibold rounded-lg bg-white border ${
-                                !amountsMatch
-                                  ? "border-[#e74c3c] text-[#c0392b]"
-                                  : "border-[#ded6c7] text-[#121214]"
-                              } focus:outline-none focus:border-[#121214]`}
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Amounts mismatch warning banner matching the wireframe */}
-                    {!amountsMatch && (
-                      <div className="bg-[#fef2f2] border border-[#fecaca] rounded-xl p-3.5 sm:p-4 mt-5 flex items-start gap-3">
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          strokeWidth={2}
-                          stroke="currentColor"
-                          className="w-4 h-4 text-[#dc2626] shrink-0 mt-0.5"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
-                          />
-                        </svg>
+                    <div className="bg-[#fbf9f4] rounded-2xl p-5 sm:p-6 border border-[#e8dfcf]">
+                      <div className="flex items-center justify-between mb-4">
                         <div>
-                          <h5 className="text-xs font-bold text-[#b91c1c]">
-                            Amounts do not match total
-                          </h5>
-                          <p className="text-[11px] text-[#991b1b] mt-0.5 leading-relaxed">
-                            The assigned amounts sum to ${assignedSum.toFixed(2)}, but the total is $
-                            {totalNum.toFixed(2)}. Please adjust the split.
+                          <h4 className="font-serif-luxury text-xl sm:text-2xl font-bold text-[#121214]">
+                            Split Details
+                          </h4>
+                          <p className="text-xs text-[#736e65] mt-0.5">
+                            Allocate individual contributions among members.
                           </p>
                         </div>
+                        {people.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={handleSplitEqually}
+                            className="text-xs font-bold text-[#8a3d1c] hover:underline cursor-pointer transition-colors bg-white border border-[#dfd7c8] px-3 py-1.5 rounded-lg shadow-2xs shrink-0"
+                          >
+                            Split Equally
+                          </button>
+                        )}
                       </div>
-                    )}
+
+                      {people.length === 0 ? (
+                        <p className="text-xs text-[#8a8477] italic py-2">
+                          Add members in Step 1 to distribute the split amounts.
+                        </p>
+                      ) : (
+                        <div className="space-y-3">
+                          {people.map((person) => (
+                            <div
+                              key={person.id}
+                              className="flex items-center justify-between gap-4 py-1.5 border-b border-[#eee7da] last:border-b-0"
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-full bg-[#121214] text-white flex items-center justify-center text-xs font-bold shadow-2xs">
+                                  {person.email.slice(0, 2).toUpperCase()}
+                                </div>
+                                <div>
+                                  <span className="text-xs sm:text-sm font-semibold text-[#121214] block">
+                                    {person.name}
+                                  </span>
+                                  <span className="text-[11px] text-[#736e65]">
+                                    {person.email}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Amount input without spin buttons */}
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-sm font-semibold text-[#736e65]">₹</span>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={person.amount}
+                                  onChange={(e) =>
+                                    handlePersonAmountChange(person.id, e.target.value)
+                                  }
+                                  placeholder="0.00"
+                                  className={`w-28 text-right px-2.5 py-1.5 text-sm font-semibold rounded-lg bg-white border [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                                    !amountsMatch
+                                      ? "border-[#e74c3c] text-[#c0392b]"
+                                      : "border-[#ded6c7] text-[#121214]"
+                                  } focus:outline-none focus:border-[#121214]`}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Amounts mismatch warning banner */}
+                      {people.length > 0 && !amountsMatch && (
+                        <div className="bg-[#fef2f2] border border-[#fecaca] rounded-xl p-3.5 sm:p-4 mt-5 flex items-start gap-3">
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            strokeWidth={2}
+                            stroke="currentColor"
+                            className="w-4 h-4 text-[#dc2626] shrink-0 mt-0.5"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
+                            />
+                          </svg>
+                          <div>
+                            <h5 className="text-xs font-bold text-[#b91c1c]">
+                              Amounts do not match total
+                            </h5>
+                            <p className="text-[11px] text-[#991b1b] mt-0.5 leading-relaxed">
+                              The assigned member shares sum to ₹{assignedSum.toFixed(2)}, but the total is ₹
+                              {totalNum.toFixed(2)}. Click &quot;Split Equally&quot; or adjust shares manually.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
 
-                {/* ── STEP 4: Deadline Card ── */}
-                <div className="relative">
-                  {/* Step Node Icon: Outline circle with 4 */}
-                  <div className="absolute -left-[35px] sm:-left-[38px] top-3 w-7 h-7 rounded-full bg-white border border-[#ded6c7] text-[#8a8477] flex items-center justify-center text-xs font-bold shadow-2xs z-10">
-                    4
-                  </div>
+                  {/* ── STEP 4: Deadline (Simple date & time input) ── */}
+                  <div className="relative">
+                    <div className="absolute -left-[35px] sm:-left-[38px] top-3 w-7 h-7 rounded-full bg-white border border-[#ded6c7] text-[#8a8477] flex items-center justify-center text-xs font-bold shadow-2xs z-10">
+                      4
+                    </div>
 
-                  <div className="bg-[#fbf9f4] rounded-2xl p-5 sm:p-6 border border-[#e8dfcf]">
-                    <h4 className="font-serif-luxury text-xl sm:text-2xl font-bold text-[#121214] mb-3.5">
-                      Deadline
-                    </h4>
+                    <div className="bg-[#fbf9f4] rounded-2xl p-5 sm:p-6 border border-[#e8dfcf]">
+                      <h4 className="font-serif-luxury text-xl sm:text-2xl font-bold text-[#121214] mb-1">
+                        Deadline
+                      </h4>
+                      <p className="text-xs text-[#736e65] mb-4">
+                        Set a payment deadline date and cutoff time.
+                      </p>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-[10px] uppercase tracking-wider font-semibold text-[#8a8477] mb-1.5">
-                          Due Date
-                        </label>
-                        <input
-                          type="text"
-                          value={dueDate}
-                          onChange={(e) => setDueDate(e.target.value)}
-                          placeholder="Select date (e.g., Oct 24, 2023)"
-                          className="w-full bg-transparent border-b border-[#ded6c7] py-1.5 text-xs text-[#121214] placeholder-[#9a9386] focus:outline-none focus:border-[#121214]"
-                        />
-                      </div>
+                      <input
+                        type="datetime-local"
+                        value={deadline}
+                        min={minDeadline}
+                        onChange={(e) => {
+                          setDeadline(e.target.value);
+                          if (formErrors.deadline) setFormErrors((prev) => ({ ...prev, deadline: undefined }));
+                        }}
+                        className="w-full sm:w-auto bg-white border border-[#ded6c7] rounded-xl px-4 py-2.5 text-sm font-semibold text-[#121214] focus:outline-none focus:border-[#121214] transition-all shadow-2xs"
+                      />
 
-                      <div>
-                        <label className="block text-[10px] uppercase tracking-wider font-semibold text-[#8a8477] mb-1.5">
-                          Time
-                        </label>
-                        <input
-                          type="text"
-                          value={dueTime}
-                          onChange={(e) => setDueTime(e.target.value)}
-                          placeholder="12:00 PM"
-                          className="w-full bg-transparent border-b border-[#ded6c7] py-1.5 text-xs text-[#121214] placeholder-[#9a9386] focus:outline-none focus:border-[#121214]"
-                        />
-                      </div>
+                      {deadline && (
+                        <p className="text-xs text-[#736e65] mt-2 font-medium">
+                          📅 Deadline: {new Date(deadline).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })} at {new Date(deadline).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
+                        </p>
+                      )}
+
+                      {formErrors.deadline && (
+                        <p className="text-[11px] text-[#d9383a] font-medium mt-1.5 flex items-center gap-1">
+                          <span>⚠</span> {formErrors.deadline}
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* ── Bottom Action Footer ── */}
-              <div className="flex items-center justify-end gap-3 pt-6 border-t border-[#ede4d4]">
-                <button
-                  type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 text-xs font-semibold text-[#6c685f] hover:text-[#121214] cursor-pointer transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={!amountsMatch || !expenseTitle.trim() || totalNum <= 0}
-                  className={`inline-flex items-center gap-1.5 px-6 py-2.5 text-xs font-bold rounded-xl transition-all shadow-sm ${
-                    amountsMatch && expenseTitle.trim() && totalNum > 0
-                      ? "bg-[#121214] hover:bg-[#27272a] text-white cursor-pointer"
-                      : "bg-[#e5dfd5] text-[#9a9386] cursor-not-allowed"
-                  }`}
-                >
-                  <span>Create Split</span>
-                  <span className="text-xs">🔒</span>
-                </button>
-              </div>
-            </form>
-          </div>
+                {/* ── Validation Errors Summary ── */}
+                {Object.keys(formErrors).length > 0 && (
+                  <div className="bg-[#fef2f2] border border-[#fecaca] rounded-xl p-3.5 sm:p-4 flex flex-col gap-1">
+                    <h5 className="text-xs font-bold text-[#b91c1c] mb-0.5">Please fix the following:</h5>
+                    {Object.values(formErrors).filter(Boolean).map((err, i) => (
+                      <p key={i} className="text-[11px] text-[#991b1b] flex items-center gap-1">
+                        <span>•</span> {err}
+                      </p>
+                    ))}
+                  </div>
+                )}
+
+                {/* ── Submit Button (On-Page) ── */}
+                <div className="flex items-center justify-end gap-3 pt-6 border-t border-[#ede4d4]">
+                  <button
+                    type="submit"
+                    className="inline-flex items-center gap-2 px-8 py-3 text-xs font-bold tracking-wider uppercase rounded-xl transition-all shadow-md bg-[#121214] hover:bg-[#27272a] text-white cursor-pointer hover:shadow-lg"
+                  >
+                    <span>Create Split</span>
+                    <span className="text-xs">🔒</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </section>
         </div>
-      )}
+      </main>
     </div>
   );
 }
