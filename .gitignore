@@ -32,8 +32,6 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 # env files
-.env
-.env.*
 !.env.example
 
 # vercel
@@ -45,3 +43,4 @@ next-env.d.ts
 
 # Prisma generated client
 /generated/
+config.bat
