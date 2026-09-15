@@ -29,6 +29,7 @@ export async function createContribution(data, prisma) {
   // Find the expense member and their assigned amount.
   const expenseMember = await prisma.expenseMember.findUnique({
     where: { id: expenseMemberId },
+    include: { expense: true },
   });
 
   if (!expenseMember) {
@@ -36,6 +37,18 @@ export async function createContribution(data, prisma) {
       success: false,
       status: 404,
       message: "Expense member not found",
+    };
+  }
+
+  const now = new Date();
+  const isDeadlinePassed = Boolean(
+    expenseMember.expense?.deadline && new Date(expenseMember.expense.deadline) <= now
+  );
+  if (expenseMember.expense?.status === "CLOSED" || isDeadlinePassed) {
+    return {
+      success: false,
+      status: 403,
+      message: "This split deadline has passed and is closed. No further contributions can be accepted.",
     };
   }
 
