@@ -456,7 +456,7 @@ export default function RegisterForm() {
       {/* Footer Branding Note */}
       <div className="text-center pt-6">
         <p className="text-[10px] tracking-[0.2em] font-semibold text-[#9e9a8f] uppercase">
-          © 2024 CRED SPLIT. HIGH-END FINANCIAL EXPERIENCE.
+          © 2026 CRED SPLIT. HIGH-END FINANCIAL EXPERIENCE.
         </p>
       </div>
     </div>
