@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 
 export default function CreatorDashboard({ initialUser = null }) {
   const router = useRouter();
-  const createSplitRef = useRef(null);
+  const [isCreateSplitOpen, setIsCreateSplitOpen] = useState(false);
 
   // User State: loaded dynamically
   const [user, setUser] = useState(initialUser);
@@ -27,6 +27,9 @@ export default function CreatorDashboard({ initialUser = null }) {
   const [emailError, setEmailError] = useState("");
   const [createSuccessMessage, setCreateSuccessMessage] = useState("");
   const [selectedExpense, setSelectedExpense] = useState(null);
+  const [previewDoc, setPreviewDoc] = useState(null);
+  const [isCheckingUser, setIsCheckingUser] = useState(false);
+  const [reviewingId, setReviewingId] = useState(null);
 
   // ── Deadline (simple datetime-local input) ──
   const [deadline, setDeadline] = useState(() => {
@@ -48,15 +51,27 @@ export default function CreatorDashboard({ initialUser = null }) {
     let isMounted = true;
     async function loadData() {
       try {
-        const res = await fetch("/api/dashboard", { credentials: "include" });
-        if (res.status === 401) {
+        const [dashRes, expRes] = await Promise.allSettled([
+          fetch("/api/dashboard", { credentials: "include" }),
+          fetch("/api/expenses?role=creator", { credentials: "include" }),
+        ]);
+
+        if (dashRes.status === "fulfilled" && dashRes.value.status === 401) {
           router.push("/login");
           return;
         }
-        if (res.ok) {
-          const data = await res.json();
-          if (isMounted && data.success) {
-            if (data.user) setUser(data.user);
+
+        if (dashRes.status === "fulfilled" && dashRes.value.ok) {
+          const data = await dashRes.value.json();
+          if (isMounted && data.success && data.user) {
+            setUser(data.user);
+          }
+        }
+
+        if (expRes.status === "fulfilled" && expRes.value.ok) {
+          const expData = await expRes.value.json();
+          if (isMounted && expData.success && Array.isArray(expData.expenses)) {
+            setExpenses(expData.expenses);
           }
         }
       } catch (err) {
@@ -78,12 +93,13 @@ export default function CreatorDashboard({ initialUser = null }) {
 
   const totalNum = parseFloat(totalAmount) || 0;
   const amountsMatch =
-    totalNum > 0 && people.length > 0 && Math.abs(assignedSum - totalNum) < 0.01;
+    people.length > 0 && Math.abs(assignedSum - totalNum) < 0.01;
 
   // Split equally helper
   const handleSplitEqually = () => {
     if (people.length === 0 || totalNum <= 0) return;
-    const share = (totalNum / people.length).toFixed(2);
+    const count = people.length;
+    const share = (totalNum / count).toFixed(2);
     setPeople(
       people.map((p) => ({
         ...p,
@@ -92,8 +108,8 @@ export default function CreatorDashboard({ initialUser = null }) {
     );
   };
 
-  // Add person helper (Email only validation)
-  const handleAddPerson = () => {
+  // Add person helper (Verifies that user is already registered on CRED Split)
+  const handleAddPerson = async () => {
     const trimmed = newPersonInput.trim().toLowerCase();
     if (!trimmed) return;
 
@@ -110,19 +126,70 @@ export default function CreatorDashboard({ initialUser = null }) {
     }
 
     setEmailError("");
-    const displayName = trimmed.split("@")[0];
-    const formattedName = displayName.charAt(0).toUpperCase() + displayName.slice(1);
+    setIsCheckingUser(true);
 
-    setPeople([
-      ...people,
-      {
-        id: `person_${Date.now()}`,
-        name: formattedName,
-        email: trimmed,
-        amount: "0.00",
-      },
-    ]);
-    setNewPersonInput("");
+    try {
+      const res = await fetch(`/api/users/check?email=${encodeURIComponent(trimmed)}`);
+      const data = await res.json();
+
+      if (!data.exists) {
+        setEmailError(`"${trimmed}" is not a registered user on CRED Split. Only registered users can be added.`);
+        setIsCheckingUser(false);
+        return;
+      }
+
+      const displayName = data.user?.name || trimmed.split("@")[0];
+
+      setPeople([
+        ...people,
+        {
+          id: data.user?.id || `person_${Date.now()}`,
+          name: displayName,
+          email: trimmed,
+          amount: "0.00",
+        },
+      ]);
+      setNewPersonInput("");
+    } catch (err) {
+      console.warn("Could not verify user:", err);
+      setEmailError("Unable to verify user registration. Please try again.");
+    } finally {
+      setIsCheckingUser(false);
+    }
+  };
+
+  // Review contribution helper (Approve or Reject member payment proof)
+  const handleReviewContribution = async (contributionId, action) => {
+    setReviewingId(contributionId);
+    try {
+      const res = await fetch("/api/contributions/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ contributionId, action }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        // Refresh expenses to get updated calculations from DB
+        const expRes = await fetch("/api/expenses?role=creator", { credentials: "include" });
+        if (expRes.ok) {
+          const expData = await expRes.json();
+          if (expData.success && Array.isArray(expData.expenses)) {
+            setExpenses(expData.expenses);
+            const updatedCurrent = expData.expenses.find((e) => e.id === selectedExpense?.id);
+            if (updatedCurrent) {
+              setSelectedExpense(updatedCurrent);
+            }
+          }
+        }
+      } else {
+        alert(data.message || "Failed to process review");
+      }
+    } catch (err) {
+      console.warn("Review contribution error:", err);
+    } finally {
+      setReviewingId(null);
+    }
   };
 
   // Remove person helper
@@ -144,7 +211,12 @@ export default function CreatorDashboard({ initialUser = null }) {
 
   // Dynamic Metrics computed from actual expenses (in Rupee ₹)
   const metrics = useMemo(() => {
-    const activeExpenses = expenses.filter((e) => e.status === "Active");
+    const now = new Date();
+    const activeExpenses = expenses.filter((e) => {
+      if (e.status === "Closed" || e.isClosed) return false;
+      if (e.rawDeadline && new Date(e.rawDeadline) <= now) return false;
+      return true;
+    });
     const activeCount = activeExpenses.length;
     const totalActive = activeExpenses.reduce((sum, e) => sum + e.totalAmount, 0);
     const collected = expenses.reduce((sum, e) => sum + e.collectedAmount, 0);
@@ -162,7 +234,19 @@ export default function CreatorDashboard({ initialUser = null }) {
 
   // Filtered and Sorted Expenses
   const filteredExpenses = useMemo(() => {
+    const now = new Date();
     return expenses
+      .map((exp) => {
+        const isClosed =
+          exp.status === "Closed" ||
+          exp.isClosed ||
+          (exp.rawDeadline && new Date(exp.rawDeadline) <= now);
+        return {
+          ...exp,
+          status: isClosed ? "Closed" : "Active",
+          isClosed,
+        };
+      })
       .filter((exp) => {
         const matchesSearch = exp.title
           .toLowerCase()
@@ -195,7 +279,7 @@ export default function CreatorDashboard({ initialUser = null }) {
   };
 
   // Handle Form Submission
-  const handleCreateSplitSubmit = (e) => {
+  const handleCreateSplitSubmit = async (e) => {
     e.preventDefault();
     const errors = validateForm();
     setFormErrors(errors);
@@ -211,7 +295,7 @@ export default function CreatorDashboard({ initialUser = null }) {
       minute: "2-digit",
     });
 
-    const newEntry = {
+    const localEntry = {
       id: `exp_${Date.now()}`,
       title: expenseTitle.trim(),
       status: "Active",
@@ -227,11 +311,44 @@ export default function CreatorDashboard({ initialUser = null }) {
         name: p.name,
         email: p.email,
         amount: parseFloat(p.amount) || 0,
+        paidAmount: 0,
       })),
     };
 
-    setExpenses([newEntry, ...expenses]);
+    try {
+      const res = await fetch("/api/expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          title: expenseTitle.trim(),
+          totalAmount: totalNum,
+          deadline,
+          members: people.map((p) => ({
+            name: p.name,
+            email: p.email,
+            amount: parseFloat(p.amount) || 0,
+          })),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setFormErrors({ server: data.message || "Failed to create split. Please verify all members are registered." });
+        return;
+      }
+
+      if (data.expense) {
+        setExpenses((prev) => [data.expense, ...prev.filter((x) => x.id !== data.expense.id)]);
+      }
+    } catch (err) {
+      console.warn("Could not save split to backend:", err);
+      setFormErrors({ server: "Network error creating split. Please try again." });
+      return;
+    }
+
     setCreateSuccessMessage(`Split "${expenseTitle}" created successfully!`);
+    setIsCreateSplitOpen(false);
 
     // Reset form
     setExpenseTitle("");
@@ -407,12 +524,10 @@ export default function CreatorDashboard({ initialUser = null }) {
               </p>
             </div>
 
-            {/* Create New Split Button: Smoothly scrolls page down to the section */}
+            {/* Create New Split Button: Opens popup modal screen */}
             <button
               type="button"
-              onClick={() => {
-                createSplitRef.current?.scrollIntoView({ behavior: "smooth" });
-              }}
+              onClick={() => setIsCreateSplitOpen(true)}
               className="inline-flex items-center justify-center gap-2 bg-[#8a3d1c] hover:bg-[#733317] text-white text-xs sm:text-sm font-semibold px-4 sm:px-5 py-2.5 sm:py-3 rounded-xl transition-all shadow-sm hover:shadow-md cursor-pointer shrink-0"
             >
               <span className="flex items-center justify-center w-4 h-4 rounded-full border border-white/50 text-xs leading-none">
@@ -731,7 +846,7 @@ export default function CreatorDashboard({ initialUser = null }) {
                   </p>
                   <button
                     type="button"
-                    onClick={() => createSplitRef.current?.scrollIntoView({ behavior: "smooth" })}
+                    onClick={() => setIsCreateSplitOpen(true)}
                     className="inline-flex items-center gap-2 bg-[#8a3d1c] hover:bg-[#733317] text-white text-xs font-bold px-5 py-3 rounded-xl transition-all shadow-sm cursor-pointer uppercase tracking-wider"
                   >
                     <span>+ Create First Split</span>
@@ -1026,6 +1141,90 @@ export default function CreatorDashboard({ initialUser = null }) {
                                 {memberProgress}%
                               </span>
                             </div>
+
+                            {/* Submitted Payment Proofs & Review Actions for Creator */}
+                            {member.contributions && member.contributions.length > 0 && (
+                              <div className="mt-4 pt-3.5 border-t border-[#eee7da] space-y-2.5">
+                                <span className="text-[10px] uppercase tracking-wider font-bold text-[#8a8477] block">
+                                  Payment Submissions &amp; Proofs:
+                                </span>
+                                {member.contributions.map((c) => (
+                                  <div
+                                    key={c.id}
+                                    className="bg-white rounded-xl p-3 sm:p-3.5 border border-[#ded6c7] flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs"
+                                  >
+                                    <div className="flex items-start sm:items-center gap-3">
+                                      <div className="w-8 h-8 rounded-lg bg-[#faf7f0] border border-[#e8dfcf] flex items-center justify-center text-sm shrink-0">
+                                        📄
+                                      </div>
+                                      <div>
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-xs font-bold text-[#121214]">
+                                            ₹{c.amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                          </span>
+                                          <span
+                                            className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md ${
+                                              c.status === "ACCEPTED"
+                                                ? "bg-[#dcfce7] text-[#166534]"
+                                                : c.status === "REJECTED"
+                                                ? "bg-[#fee2e2] text-[#991b1b]"
+                                                : "bg-[#fef3c7] text-[#92400e]"
+                                            }`}
+                                          >
+                                            {c.status === "ACCEPTED"
+                                              ? "Approved"
+                                              : c.status === "REJECTED"
+                                              ? "Rejected"
+                                              : "Pending Approval"}
+                                          </span>
+                                        </div>
+
+                                        {c.paymentProof && (
+                                          <button
+                                            type="button"
+                                            onClick={() => setPreviewDoc(c.paymentProof)}
+                                            className="text-[11px] font-semibold text-[#8a3d1c] hover:underline flex items-center gap-1 mt-0.5 cursor-pointer"
+                                          >
+                                            <span>View Uploaded Document ({c.paymentProof.fileName})</span>
+                                            <span>↗</span>
+                                          </button>
+                                        )}
+
+                                        {c.rejectionReason && (
+                                          <span className="text-[10px] text-[#8a8477] block mt-0.5">
+                                            {c.rejectionReason}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    {/* Action Buttons: Only shown if Pending Approval */}
+                                    {c.status === "PENDING" && (
+                                      <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                                        <button
+                                          type="button"
+                                          disabled={reviewingId === c.id}
+                                          onClick={() => handleReviewContribution(c.id, "APPROVE")}
+                                          className="px-3.5 py-1.5 rounded-lg bg-[#15803d] hover:bg-[#166534] text-white text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                                        >
+                                          <span>✓</span>
+                                          <span>Approve</span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={reviewingId === c.id}
+                                          onClick={() => handleReviewContribution(c.id, "REJECT")}
+                                          className="px-3.5 py-1.5 rounded-lg bg-white border border-[#dc2626] text-[#dc2626] hover:bg-[#fef2f2] text-xs font-bold transition-all cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                                        >
+                                          <span>✕</span>
+                                          <span>Reject</span>
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -1033,327 +1232,435 @@ export default function CreatorDashboard({ initialUser = null }) {
                   )}
                 </div>
               </div>
+
+              {/* Document Preview Modal */}
+              {previewDoc && (
+                <div
+                  className="fixed inset-0 z-60 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 sm:p-6 animate-in fade-in"
+                  onClick={() => setPreviewDoc(null)}
+                >
+                  <div
+                    className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-[#ded6c7] max-h-[90vh] flex flex-col"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-center justify-between border-b border-[#ede4d4] pb-3 mb-4">
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-[#8a8477]">Uploaded Payment Proof</span>
+                        <h4 className="font-bold text-base text-[#121214] truncate max-w-md">
+                          {previewDoc.fileName}
+                        </h4>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewDoc(null)}
+                        className="w-8 h-8 rounded-full bg-[#f4efe6] text-[#6c685f] hover:text-[#121214] flex items-center justify-center font-bold text-sm cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto flex items-center justify-center p-2 bg-[#faf8f4] rounded-2xl border border-[#eee7da]">
+                      {previewDoc.fileUrl?.match(/\.(jpeg|jpg|png|webp|gif|svg)$/i) ? (
+                        <img
+                          src={previewDoc.fileUrl}
+                          alt={previewDoc.fileName}
+                          className="max-h-[60vh] max-w-full object-contain rounded-lg shadow-sm"
+                        />
+                      ) : (
+                        <iframe
+                          src={previewDoc.fileUrl}
+                          title={previewDoc.fileName}
+                          className="w-full h-[60vh] rounded-lg"
+                        />
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between mt-4 pt-3 border-t border-[#ede4d4]">
+                      <a
+                        href={previewDoc.fileUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs font-bold text-[#8a3d1c] hover:underline flex items-center gap-1"
+                      >
+                        <span>Open original in new tab</span>
+                        <span>↗</span>
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewDoc(null)}
+                        className="px-5 py-2 rounded-xl bg-[#121214] text-white text-xs font-bold cursor-pointer"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
           {/* ───────────────────────────────────────────────────────────
-              CREATE NEW SPLIT SECTION (Inline On-Page Component with Smooth Scrolling)
+              CREATE NEW SPLIT POPUP MODAL SCREEN
              ─────────────────────────────────────────────────────────── */}
-          <section
-            ref={createSplitRef}
-            className="pt-6 border-t border-[#ded6c7]"
-          >
-            <div className="bg-white rounded-3xl p-6 sm:p-10 border border-[#dfd7c8] shadow-[0_15px_40px_-15px_rgba(40,30,15,0.06)]">
-              {/* Header */}
-              <div className="mb-8">
-                <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-2 border-b border-[#ded6c7] pb-2">
-                  <input
-                    type="text"
-                    value={expenseTitle}
-                    onChange={(e) => setExpenseTitle(e.target.value)}
-                    placeholder="Enter Split Name (e.g., Goa Trip, Dinner)"
-                    className="font-serif-luxury text-3xl sm:text-4xl font-bold tracking-tight text-[#121214] placeholder-[#a8a193] bg-transparent w-full focus:outline-none"
-                  />
-                  <span className="text-[11px] uppercase tracking-wider text-[#8a8477] font-bold shrink-0">
-                    Step-by-step
-                  </span>
-                </div>
-                <p className="text-xs sm:text-sm text-[#736e65] mt-2">
-                  Break down shared costs and allocate shares seamlessly.
-                </p>
-              </div>
-
-              {/* Stepper Flow with Vertical Line */}
-              <form onSubmit={handleCreateSplitSubmit} className="space-y-6">
-                <div className="relative pl-9 sm:pl-10 space-y-6">
-                  {/* Vertical Timeline Guide Line */}
-                  <div className="absolute left-[15px] sm:left-[17px] top-4 bottom-6 w-[2px] bg-[#e8dfcf]" />
-
-                  {/* ── STEP 1: People Card (Add by email only) ── */}
-                  <div className="relative">
-                    <div className="absolute -left-[35px] sm:-left-[38px] top-3 w-7 h-7 rounded-full bg-white border border-[#ded6c7] text-[#121214] flex items-center justify-center text-xs font-bold shadow-2xs z-10">
-                      1
-                    </div>
-
-                    <div className="bg-[#fbf9f4] rounded-2xl p-5 sm:p-6 border border-[#e8dfcf]">
-                      <h4 className="font-serif-luxury text-xl sm:text-2xl font-bold text-[#121214] mb-1">
-                        People
-                      </h4>
-                      <p className="text-xs text-[#736e65] mb-3.5">
-                        Add members to this split using their verified email address.
-                      </p>
-
-                      {/* Participant Chips */}
-                      {people.length > 0 && (
-                        <div className="flex flex-wrap items-center gap-2 mb-4">
-                          {people.map((person) => (
-                            <div
-                              key={person.id}
-                              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-[#ded6c7] shadow-2xs text-xs font-semibold text-[#121214]"
-                            >
-                              <div className="w-5 h-5 rounded-full bg-[#121214] text-white flex items-center justify-center text-[10px] font-bold">
-                                {person.email.slice(0, 2).toUpperCase()}
-                              </div>
-                              <span className="font-medium text-[#4e4a40]">{person.email}</span>
-                              <button
-                                type="button"
-                                onClick={() => handleRemovePerson(person.id)}
-                                className="text-[#9a9386] hover:text-[#e74c3c] font-bold text-sm ml-1 cursor-pointer leading-none"
-                                title="Remove participant"
-                              >
-                                ×
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Add person input (EMAIL ONLY) */}
-                      <div>
-                        <label className="block text-[11px] uppercase tracking-wider font-semibold text-[#8a8477] mb-1.5">
-                          Add by email
-                        </label>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="email"
-                            value={newPersonInput}
-                            onChange={(e) => {
-                              setNewPersonInput(e.target.value);
-                              if (emailError) setEmailError("");
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                handleAddPerson();
-                              }
-                            }}
-                            placeholder="name@example.com"
-                            className="flex-1 bg-white border border-[#ded6c7] rounded-xl px-3.5 py-2.5 text-xs text-[#121214] placeholder-[#9a9386] focus:outline-none focus:border-[#121214]"
-                          />
-                          <button
-                            type="button"
-                            onClick={handleAddPerson}
-                            className="bg-white hover:bg-[#faf7f0] border border-[#ded6c7] rounded-xl px-4 py-2.5 text-xs font-bold text-[#121214] cursor-pointer transition-colors shadow-2xs shrink-0"
-                          >
-                            + Add Person
-                          </button>
-                        </div>
-                        {emailError && (
-                          <p className="text-[11px] text-[#d9383a] font-medium mt-1.5 flex items-center gap-1">
-                            <span>⚠</span> {emailError}
-                          </p>
-                        )}
-                      </div>
-                    </div>
+          {isCreateSplitOpen && (
+            <div
+              className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in"
+              onClick={() => {
+                setIsCreateSplitOpen(false);
+                setFormErrors({});
+              }}
+            >
+              <div
+                className="bg-white rounded-3xl max-w-3xl w-full p-6 sm:p-10 shadow-2xl border border-[#dfd7c8] my-auto max-h-[92vh] flex flex-col"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Modal Header */}
+                <div className="flex items-start justify-between border-b border-[#ded6c7] pb-4 mb-6 shrink-0">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-[#8a8477] tracking-wider block">
+                      New Split
+                    </span>
+                    <h3 className="font-serif-luxury text-2xl sm:text-3xl font-bold tracking-tight text-[#121214]">
+                      Create Group Split
+                    </h3>
+                    <p className="text-xs text-[#736e65] mt-1">
+                      Set up the split details, add members, and allocate shares.
+                    </p>
                   </div>
-
-                  {/* ── STEP 2: Total Amount Card (Rupee ₹ and no spin arrows) ── */}
-                  <div className="relative">
-                    <div className="absolute -left-[35px] sm:-left-[38px] top-3 w-7 h-7 rounded-full bg-white border border-[#ded6c7] text-[#121214] flex items-center justify-center text-xs font-bold shadow-2xs z-10">
-                      2
-                    </div>
-
-                    <div className="bg-[#fbf9f4] rounded-2xl p-5 sm:p-6 border border-[#e8dfcf]">
-                      <h4 className="font-serif-luxury text-xl sm:text-2xl font-bold text-[#121214] mb-2">
-                        Total Amount
-                      </h4>
-
-                      <div className="flex items-baseline gap-2 py-2 border-b border-[#ded6c7]">
-                        <span className="font-serif-luxury text-3xl sm:text-4xl font-bold text-[#121214]">
-                          ₹
-                        </span>
-                        {/* Decimal input without spin up/down buttons */}
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          value={totalAmount}
-                          onChange={(e) => {
-                            const val = e.target.value.replace(/[^0-9.]/g, "");
-                            const parts = val.split(".");
-                            if (parts.length > 2) return;
-                            setTotalAmount(val);
-                          }}
-                          placeholder="0.00"
-                          className="font-serif-luxury text-4xl sm:text-5xl font-bold tracking-tight text-[#121214] bg-transparent focus:outline-none w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                        />
-                      </div>
-                      <p className="text-xs text-[#8a8477] font-medium mt-2">
-                        Total expense amount paid by you as creator
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* ── STEP 3: Split Details Card (Rupee ₹ and no spin arrows) ── */}
-                  <div className="relative">
-                    <div className="absolute -left-[35px] sm:-left-[38px] top-3 w-7 h-7 rounded-full bg-[#121214] text-white flex items-center justify-center text-xs font-bold shadow-2xs z-10">
-                      3
-                    </div>
-
-                    <div className="bg-[#fbf9f4] rounded-2xl p-5 sm:p-6 border border-[#e8dfcf]">
-                      <div className="flex items-center justify-between mb-4">
-                        <div>
-                          <h4 className="font-serif-luxury text-xl sm:text-2xl font-bold text-[#121214]">
-                            Split Details
-                          </h4>
-                          <p className="text-xs text-[#736e65] mt-0.5">
-                            Allocate individual contributions among members.
-                          </p>
-                        </div>
-                        {people.length > 0 && (
-                          <button
-                            type="button"
-                            onClick={handleSplitEqually}
-                            className="text-xs font-bold text-[#8a3d1c] hover:underline cursor-pointer transition-colors bg-white border border-[#dfd7c8] px-3 py-1.5 rounded-lg shadow-2xs shrink-0"
-                          >
-                            Split Equally
-                          </button>
-                        )}
-                      </div>
-
-                      {people.length === 0 ? (
-                        <p className="text-xs text-[#8a8477] italic py-2">
-                          Add members in Step 1 to distribute the split amounts.
-                        </p>
-                      ) : (
-                        <div className="space-y-3">
-                          {people.map((person) => (
-                            <div
-                              key={person.id}
-                              className="flex items-center justify-between gap-4 py-1.5 border-b border-[#eee7da] last:border-b-0"
-                            >
-                              <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-full bg-[#121214] text-white flex items-center justify-center text-xs font-bold shadow-2xs">
-                                  {person.email.slice(0, 2).toUpperCase()}
-                                </div>
-                                <div>
-                                  <span className="text-xs sm:text-sm font-semibold text-[#121214] block">
-                                    {person.name}
-                                  </span>
-                                  <span className="text-[11px] text-[#736e65]">
-                                    {person.email}
-                                  </span>
-                                </div>
-                              </div>
-
-                              {/* Amount input without spin buttons */}
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-sm font-semibold text-[#736e65]">₹</span>
-                                <input
-                                  type="text"
-                                  inputMode="decimal"
-                                  value={person.amount}
-                                  onChange={(e) =>
-                                    handlePersonAmountChange(person.id, e.target.value)
-                                  }
-                                  placeholder="0.00"
-                                  className={`w-28 text-right px-2.5 py-1.5 text-sm font-semibold rounded-lg bg-white border [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
-                                    !amountsMatch
-                                      ? "border-[#e74c3c] text-[#c0392b]"
-                                      : "border-[#ded6c7] text-[#121214]"
-                                  } focus:outline-none focus:border-[#121214]`}
-                                />
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Amounts mismatch warning banner */}
-                      {people.length > 0 && !amountsMatch && (
-                        <div className="bg-[#fef2f2] border border-[#fecaca] rounded-xl p-3.5 sm:p-4 mt-5 flex items-start gap-3">
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            strokeWidth={2}
-                            stroke="currentColor"
-                            className="w-4 h-4 text-[#dc2626] shrink-0 mt-0.5"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
-                            />
-                          </svg>
-                          <div>
-                            <h5 className="text-xs font-bold text-[#b91c1c]">
-                              Amounts do not match total
-                            </h5>
-                            <p className="text-[11px] text-[#991b1b] mt-0.5 leading-relaxed">
-                              The assigned member shares sum to ₹{assignedSum.toFixed(2)}, but the total is ₹
-                              {totalNum.toFixed(2)}. Click &quot;Split Equally&quot; or adjust shares manually.
-                            </p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* ── STEP 4: Deadline (Simple date & time input) ── */}
-                  <div className="relative">
-                    <div className="absolute -left-[35px] sm:-left-[38px] top-3 w-7 h-7 rounded-full bg-white border border-[#ded6c7] text-[#8a8477] flex items-center justify-center text-xs font-bold shadow-2xs z-10">
-                      4
-                    </div>
-
-                    <div className="bg-[#fbf9f4] rounded-2xl p-5 sm:p-6 border border-[#e8dfcf]">
-                      <h4 className="font-serif-luxury text-xl sm:text-2xl font-bold text-[#121214] mb-1">
-                        Deadline
-                      </h4>
-                      <p className="text-xs text-[#736e65] mb-4">
-                        Set a payment deadline date and cutoff time.
-                      </p>
-
-                      <input
-                        type="datetime-local"
-                        value={deadline}
-                        min={minDeadline}
-                        onChange={(e) => {
-                          setDeadline(e.target.value);
-                          if (formErrors.deadline) setFormErrors((prev) => ({ ...prev, deadline: undefined }));
-                        }}
-                        className="w-full sm:w-auto bg-white border border-[#ded6c7] rounded-xl px-4 py-2.5 text-sm font-semibold text-[#121214] focus:outline-none focus:border-[#121214] transition-all shadow-2xs"
-                      />
-
-                      {deadline && (
-                        <p className="text-xs text-[#736e65] mt-2 font-medium">
-                          📅 Deadline: {new Date(deadline).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })} at {new Date(deadline).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
-                        </p>
-                      )}
-
-                      {formErrors.deadline && (
-                        <p className="text-[11px] text-[#d9383a] font-medium mt-1.5 flex items-center gap-1">
-                          <span>⚠</span> {formErrors.deadline}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* ── Validation Errors Summary ── */}
-                {Object.keys(formErrors).length > 0 && (
-                  <div className="bg-[#fef2f2] border border-[#fecaca] rounded-xl p-3.5 sm:p-4 flex flex-col gap-1">
-                    <h5 className="text-xs font-bold text-[#b91c1c] mb-0.5">Please fix the following:</h5>
-                    {Object.values(formErrors).filter(Boolean).map((err, i) => (
-                      <p key={i} className="text-[11px] text-[#991b1b] flex items-center gap-1">
-                        <span>•</span> {err}
-                      </p>
-                    ))}
-                  </div>
-                )}
-
-                {/* ── Submit Button (On-Page) ── */}
-                <div className="flex items-center justify-end gap-3 pt-6 border-t border-[#ede4d4]">
                   <button
-                    type="submit"
-                    className="inline-flex items-center gap-2 px-8 py-3 text-xs font-bold tracking-wider uppercase rounded-xl transition-all shadow-md bg-[#121214] hover:bg-[#27272a] text-white cursor-pointer hover:shadow-lg"
+                    type="button"
+                    onClick={() => {
+                      setIsCreateSplitOpen(false);
+                      setFormErrors({});
+                    }}
+                    className="w-9 h-9 rounded-full bg-[#f4efe6] text-[#6c685f] hover:text-[#121214] hover:bg-[#e9e1d1] flex items-center justify-center font-bold text-base cursor-pointer transition-colors shrink-0 ml-4"
                   >
-                    <span>Create Split</span>
-                    <span className="text-xs">🔒</span>
+                    ✕
                   </button>
                 </div>
-              </form>
+
+                {/* Stepper Form with Scrollable Content */}
+                <form onSubmit={handleCreateSplitSubmit} className="flex-1 overflow-y-auto pr-1 sm:pr-2 space-y-6">
+                  {/* Split Title Input */}
+                  <div>
+                    <label className="block text-[11px] uppercase tracking-wider font-semibold text-[#8a8477] mb-1.5">
+                      Split Name / Title
+                    </label>
+                    <input
+                      type="text"
+                      value={expenseTitle}
+                      onChange={(e) => {
+                        setExpenseTitle(e.target.value);
+                        if (formErrors.title) setFormErrors((prev) => ({ ...prev, title: undefined }));
+                      }}
+                      placeholder="Enter Split Name (e.g., Goa Trip, Weekend Dinner, Rent)"
+                      className="w-full bg-[#faf7f0] border border-[#ded6c7] rounded-xl px-4 py-3 text-base font-semibold text-[#121214] placeholder-[#9a9386] focus:outline-none focus:border-[#121214] focus:bg-white transition-all shadow-2xs"
+                    />
+                    {formErrors.title && (
+                      <p className="text-[11px] text-[#d9383a] font-medium mt-1.5 flex items-center gap-1">
+                        <span>⚠</span> {formErrors.title}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="relative pl-9 sm:pl-10 space-y-6">
+                    {/* Vertical Timeline Guide Line */}
+                    <div className="absolute left-[15px] sm:left-[17px] top-4 bottom-6 w-[2px] bg-[#e8dfcf]" />
+
+                    {/* ── STEP 1: People Card (Add by email only) ── */}
+                    <div className="relative">
+                      <div className="absolute -left-[35px] sm:-left-[38px] top-3 w-7 h-7 rounded-full bg-white border border-[#ded6c7] text-[#121214] flex items-center justify-center text-xs font-bold shadow-2xs z-10">
+                        1
+                      </div>
+
+                      <div className="bg-[#fbf9f4] rounded-2xl p-5 sm:p-6 border border-[#e8dfcf]">
+                        <h4 className="font-serif-luxury text-xl sm:text-2xl font-bold text-[#121214] mb-1">
+                          People
+                        </h4>
+                        <p className="text-xs text-[#736e65] mb-3.5">
+                          Add members to this split using their registered email address.
+                        </p>
+
+                        {/* Participant Chips */}
+                        {people.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-2 mb-4">
+                            {people.map((person) => (
+                              <div
+                                key={person.id}
+                                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-[#ded6c7] shadow-2xs text-xs font-semibold text-[#121214]"
+                              >
+                                <div className="w-5 h-5 rounded-full bg-[#121214] text-white flex items-center justify-center text-[10px] font-bold">
+                                  {person.email.slice(0, 2).toUpperCase()}
+                                </div>
+                                <span className="font-medium text-[#4e4a40]">{person.email}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemovePerson(person.id)}
+                                  className="text-[#9a9386] hover:text-[#e74c3c] font-bold text-sm ml-1 cursor-pointer leading-none"
+                                  title="Remove participant"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Add person input (EMAIL ONLY) */}
+                        <div>
+                          <label className="block text-[11px] uppercase tracking-wider font-semibold text-[#8a8477] mb-1.5">
+                            Add by email
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="email"
+                              value={newPersonInput}
+                              onChange={(e) => {
+                                setNewPersonInput(e.target.value);
+                                if (emailError) setEmailError("");
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  handleAddPerson();
+                                }
+                              }}
+                              placeholder="name@example.com"
+                              className="flex-1 bg-white border border-[#ded6c7] rounded-xl px-3.5 py-2.5 text-xs text-[#121214] placeholder-[#9a9386] focus:outline-none focus:border-[#121214]"
+                            />
+                            <button
+                              type="button"
+                              disabled={isCheckingUser}
+                              onClick={handleAddPerson}
+                              className="bg-white hover:bg-[#faf7f0] border border-[#ded6c7] rounded-xl px-4 py-2.5 text-xs font-bold text-[#121214] cursor-pointer transition-colors shadow-2xs shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {isCheckingUser ? "Verifying..." : "+ Add Person"}
+                            </button>
+                          </div>
+                          {emailError && (
+                            <p className="text-[11px] text-[#d9383a] font-medium mt-1.5 flex items-center gap-1">
+                              <span>⚠</span> {emailError}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ── STEP 2: Total Amount Card (Rupee ₹ and no spin arrows) ── */}
+                    <div className="relative">
+                      <div className="absolute -left-[35px] sm:-left-[38px] top-3 w-7 h-7 rounded-full bg-white border border-[#ded6c7] text-[#121214] flex items-center justify-center text-xs font-bold shadow-2xs z-10">
+                        2
+                      </div>
+
+                      <div className="bg-[#fbf9f4] rounded-2xl p-5 sm:p-6 border border-[#e8dfcf]">
+                        <h4 className="font-serif-luxury text-xl sm:text-2xl font-bold text-[#121214] mb-2">
+                          Total Amount
+                        </h4>
+
+                        <div className="flex items-baseline gap-2 py-2 border-b border-[#ded6c7]">
+                          <span className="font-serif-luxury text-3xl sm:text-4xl font-bold text-[#121214]">
+                            ₹
+                          </span>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={totalAmount}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/[^0-9.]/g, "");
+                              const parts = val.split(".");
+                              if (parts.length > 2) return;
+                              setTotalAmount(val);
+                            }}
+                            placeholder="0.00"
+                            className="font-serif-luxury text-4xl sm:text-5xl font-bold tracking-tight text-[#121214] bg-transparent focus:outline-none w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          />
+                        </div>
+                        <p className="text-xs text-[#8a8477] font-medium mt-2">
+                          Total expense amount paid by you as creator
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* ── STEP 3: Split Details Card (Rupee ₹ and no spin arrows) ── */}
+                    <div className="relative">
+                      <div className="absolute -left-[35px] sm:-left-[38px] top-3 w-7 h-7 rounded-full bg-[#121214] text-white flex items-center justify-center text-xs font-bold shadow-2xs z-10">
+                        3
+                      </div>
+
+                      <div className="bg-[#fbf9f4] rounded-2xl p-5 sm:p-6 border border-[#e8dfcf]">
+                        <div className="flex items-center justify-between mb-4">
+                          <div>
+                            <h4 className="font-serif-luxury text-xl sm:text-2xl font-bold text-[#121214]">
+                              Split Details
+                            </h4>
+                            <p className="text-xs text-[#736e65] mt-0.5">
+                              Allocate individual contributions among members.
+                            </p>
+                          </div>
+                          {people.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={handleSplitEqually}
+                              className="text-xs font-bold text-[#8a3d1c] hover:underline cursor-pointer transition-colors bg-white border border-[#dfd7c8] px-3 py-1.5 rounded-lg shadow-2xs shrink-0"
+                            >
+                              Split Equally
+                            </button>
+                          )}
+                        </div>
+
+                        {people.length === 0 ? (
+                          <p className="text-xs text-[#8a8477] italic py-2">
+                            Add members in Step 1 to distribute the split amounts.
+                          </p>
+                        ) : (
+                          <div className="space-y-3">
+                            {people.map((person) => (
+                              <div
+                                key={person.id}
+                                className="flex items-center justify-between gap-4 py-1.5 border-b border-[#eee7da] last:border-b-0"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className="w-8 h-8 rounded-full bg-[#121214] text-white flex items-center justify-center text-xs font-bold shadow-2xs">
+                                    {person.email.slice(0, 2).toUpperCase()}
+                                  </div>
+                                  <div>
+                                    <span className="text-xs sm:text-sm font-semibold text-[#121214] block">
+                                      {person.name}
+                                    </span>
+                                    <span className="text-[11px] text-[#736e65]">
+                                      {person.email}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-sm font-semibold text-[#736e65]">₹</span>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={person.amount}
+                                    onChange={(e) =>
+                                      handlePersonAmountChange(person.id, e.target.value)
+                                    }
+                                    placeholder="0.00"
+                                    className={`w-28 text-right px-2.5 py-1.5 text-sm font-semibold rounded-lg bg-white border [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                                      !amountsMatch
+                                        ? "border-[#e74c3c] text-[#c0392b]"
+                                        : "border-[#ded6c7] text-[#121214]"
+                                    } focus:outline-none focus:border-[#121214]`}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {people.length > 0 && !amountsMatch && (
+                          <div className="bg-[#fef2f2] border border-[#fecaca] rounded-xl p-3.5 sm:p-4 mt-5 flex items-start gap-3">
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              strokeWidth={2}
+                              stroke="currentColor"
+                              className="w-4 h-4 text-[#dc2626] shrink-0 mt-0.5"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
+                              />
+                            </svg>
+                            <div>
+                              <h5 className="text-xs font-bold text-[#b91c1c]">
+                                Amounts do not match total
+                              </h5>
+                              <p className="text-[11px] text-[#991b1b] mt-0.5 leading-relaxed">
+                                The assigned member shares sum to ₹{assignedSum.toFixed(2)}, but the total is ₹
+                                {totalNum.toFixed(2)}. Click &quot;Split Equally&quot; or adjust shares manually.
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* ── STEP 4: Deadline (Simple date & time input) ── */}
+                    <div className="relative">
+                      <div className="absolute -left-[35px] sm:-left-[38px] top-3 w-7 h-7 rounded-full bg-white border border-[#ded6c7] text-[#8a8477] flex items-center justify-center text-xs font-bold shadow-2xs z-10">
+                        4
+                      </div>
+
+                      <div className="bg-[#fbf9f4] rounded-2xl p-5 sm:p-6 border border-[#e8dfcf]">
+                        <h4 className="font-serif-luxury text-xl sm:text-2xl font-bold text-[#121214] mb-1">
+                          Deadline
+                        </h4>
+                        <p className="text-xs text-[#736e65] mb-4">
+                          Set a payment deadline date and cutoff time.
+                        </p>
+
+                        <input
+                          type="datetime-local"
+                          value={deadline}
+                          min={minDeadline}
+                          onChange={(e) => {
+                            setDeadline(e.target.value);
+                            if (formErrors.deadline) setFormErrors((prev) => ({ ...prev, deadline: undefined }));
+                          }}
+                          className="w-full sm:w-auto bg-white border border-[#ded6c7] rounded-xl px-4 py-2.5 text-sm font-semibold text-[#121214] focus:outline-none focus:border-[#121214] transition-all shadow-2xs"
+                        />
+
+                        {deadline && (
+                          <p className="text-xs text-[#736e65] mt-2 font-medium">
+                            📅 Deadline: {new Date(deadline).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })} at {new Date(deadline).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
+                          </p>
+                        )}
+
+                        {formErrors.deadline && (
+                          <p className="text-[11px] text-[#d9383a] font-medium mt-1.5 flex items-center gap-1">
+                            <span>⚠</span> {formErrors.deadline}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ── Validation Errors Summary ── */}
+                  {Object.keys(formErrors).length > 0 && (
+                    <div className="bg-[#fef2f2] border border-[#fecaca] rounded-xl p-3.5 sm:p-4 flex flex-col gap-1">
+                      <h5 className="text-xs font-bold text-[#b91c1c] mb-0.5">Please fix the following:</h5>
+                      {Object.values(formErrors).filter(Boolean).map((err, i) => (
+                        <p key={i} className="text-[11px] text-[#991b1b] flex items-center gap-1">
+                          <span>•</span> {err}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* ── Modal Footer Buttons ── */}
+                  <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#ede4d4] shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCreateSplitOpen(false);
+                        setFormErrors({});
+                      }}
+                      className="px-6 py-2.5 text-xs font-bold tracking-wider text-[#6c685f] hover:text-[#121214] rounded-xl border border-[#ded6c7] hover:bg-[#f8f5ee] transition-all cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="inline-flex items-center gap-2 px-7 py-2.5 text-xs font-bold tracking-wider uppercase rounded-xl transition-all shadow-md bg-[#8a3d1c] hover:bg-[#733317] text-white cursor-pointer hover:shadow-lg"
+                    >
+                      <span>Create Split</span>
+                      <span className="text-xs">🔒</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
-          </section>
+          )}
         </div>
       </main>
     </div>

@@ -1,13 +1,10 @@
 import { NextResponse } from "next/server";
 import { createContribution } from "../../../../services/contribution.service.js";
+import { prisma } from "@/lib/prisma";
 
 export async function POST(request) {
   try {
     const body = await request.json();
-
-    // Prisma will be connected here once the database is configured.
-    // For now, the service expects Prisma to be passed in.
-    const prisma = request.prisma;
 
     const result = await createContribution(body, prisma);
 

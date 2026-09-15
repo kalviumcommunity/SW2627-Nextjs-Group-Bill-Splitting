@@ -40,20 +40,32 @@ export default function PayerDashboard({ initialUser = null }) {
     }, 4500);
   };
 
-  // Fetch live user data from backend
+  // Fetch live user & payer data from backend
   useEffect(() => {
     let isMounted = true;
     async function loadData() {
       try {
-        const res = await fetch("/api/dashboard", { credentials: "include" });
-        if (res.status === 401) {
+        const [dashRes, expRes] = await Promise.allSettled([
+          fetch("/api/dashboard", { credentials: "include" }),
+          fetch("/api/expenses?role=payer", { credentials: "include" }),
+        ]);
+
+        if (dashRes.status === "fulfilled" && dashRes.value.status === 401) {
           router.push("/login");
           return;
         }
-        if (res.ok) {
-          const data = await res.json();
-          if (isMounted && data.success) {
-            if (data.user) setUser(data.user);
+
+        if (dashRes.status === "fulfilled" && dashRes.value.ok) {
+          const data = await dashRes.value.json();
+          if (isMounted && data.success && data.user) {
+            setUser(data.user);
+          }
+        }
+
+        if (expRes.status === "fulfilled" && expRes.value.ok) {
+          const expData = await expRes.value.json();
+          if (isMounted && expData.success && Array.isArray(expData.expenses)) {
+            setExpenses(expData.expenses);
           }
         }
       } catch (err) {
@@ -128,6 +140,17 @@ export default function PayerDashboard({ initialUser = null }) {
 
   // Open Payment Modal
   const handleOpenPayment = (expense) => {
+    const now = new Date();
+    const isClosed =
+      expense.isClosed ||
+      expense.status === "Closed" ||
+      (expense.rawDeadline && new Date(expense.rawDeadline) <= now);
+
+    if (isClosed) {
+      showToast("This split has reached its deadline and is closed for contributions.", "error");
+      return;
+    }
+
     setActiveExpenseForPayment(expense);
     setPaymentAmount(expense.remaining.toFixed(2));
     setPaymentProofFile(null);
@@ -146,6 +169,7 @@ export default function PayerDashboard({ initialUser = null }) {
     const file = e.target.files?.[0];
     if (file) {
       setPaymentProofFile({
+        rawFile: file,
         name: file.name,
         size: (file.size / 1024).toFixed(1) + " KB",
         type: file.type,
@@ -153,8 +177,8 @@ export default function PayerDashboard({ initialUser = null }) {
     }
   };
 
-  // Submit Payment & Proof (Frontend State Update + PRD Contract Simulation)
-  const handleSubmitPayment = (e) => {
+  // Submit Payment & Proof (Uploads Document + Backend API)
+  const handleSubmitPayment = async (e) => {
     e.preventDefault();
     if (!activeExpenseForPayment) return;
 
@@ -171,32 +195,94 @@ export default function PayerDashboard({ initialUser = null }) {
 
     setIsSubmittingPayment(true);
 
-    setTimeout(() => {
-      // Update local state
-      setExpenses((prev) =>
-        prev.map((exp) => {
-          if (exp.id === activeExpenseForPayment.id) {
-            const newPaid = exp.paidSoFar + amountNum;
-            const newRemaining = Math.max(0, exp.assigned - newPaid);
-            return {
-              ...exp,
-              paidSoFar: newPaid,
-              remaining: newRemaining,
-            };
-          }
-          return exp;
-        })
-      );
+    let uploadedFileUrl = null;
+    let uploadedFileName = paymentProofFile?.name || null;
 
+    // 1. Upload the real document file to server
+    if (paymentProofFile?.rawFile) {
+      try {
+        const formData = new FormData();
+        formData.append("file", paymentProofFile.rawFile);
+        const upRes = await fetch("/api/upload", {
+          method: "POST",
+          body: formData,
+          credentials: "include",
+        });
+        if (upRes.ok) {
+          const upData = await upRes.json();
+          if (upData.success) {
+            uploadedFileUrl = upData.fileUrl;
+            uploadedFileName = upData.fileName;
+          }
+        }
+      } catch (upErr) {
+        console.warn("Could not upload file to server:", upErr);
+      }
+    }
+
+    // 2. Submit contribution to backend awaiting creator review
+    try {
+      const res = await fetch("/api/contributions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          expenseId: activeExpenseForPayment.id,
+          expenseMemberId: activeExpenseForPayment.expenseMemberId,
+          amount: amountNum,
+          transactionRef,
+          note: paymentNote,
+          proofFileName: uploadedFileName,
+          proofFileUrl: uploadedFileUrl,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast(data.message || "Failed to submit payment", "error");
+        setIsSubmittingPayment(false);
+        if (res.status === 403) {
+          handleClosePayment();
+          setExpenses((prev) =>
+            prev.map((exp) =>
+              exp.id === activeExpenseForPayment.id
+                ? { ...exp, isClosed: true, status: "Closed" }
+                : exp
+            )
+          );
+        }
+        return;
+      }
+    } catch (err) {
+      console.warn("Could not record contribution to backend:", err);
+      showToast("Network error submitting payment", "error");
       setIsSubmittingPayment(false);
-      showToast(
-        `Successfully submitted ₹${amountNum.toFixed(2)} payment for ${
-          activeExpenseForPayment.title
-        }. Proof recorded!`,
-        "success"
-      );
-      handleClosePayment();
-    }, 600);
+      return;
+    }
+
+    // Update local state to show pending approval
+    setExpenses((prev) =>
+      prev.map((exp) => {
+        if (exp.id === activeExpenseForPayment.id) {
+          return {
+            ...exp,
+            status: "Pending Approval",
+            pendingApprovalAmount: (exp.pendingApprovalAmount || 0) + amountNum,
+          };
+        }
+        return exp;
+      })
+    );
+
+    setIsSubmittingPayment(false);
+    handleClosePayment();
+    showToast(
+      `Payment & proof of ₹${amountNum.toFixed(2)} submitted for ${
+        activeExpenseForPayment.title
+      }. Sent to creator for review!`,
+      "success"
+    );
+    handleClosePayment();
   };
 
   // User Initials
@@ -792,11 +878,24 @@ export default function PayerDashboard({ initialUser = null }) {
                         </span>
                       </div>
 
-                      {/* Action Button: View & Pay */}
+                      {/* Action Button: Settled / Closed / Pending Approval / View & Pay */}
                       {isFullyPaid ? (
                         <div className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-[#ecfdf5] border border-[#a7f3d0] text-[#065f46] text-xs font-bold shrink-0">
                           <span>✓</span>
                           <span>Settled</span>
+                        </div>
+                      ) : expense.isClosed || expense.status === "Closed" || (expense.rawDeadline && new Date(expense.rawDeadline) <= new Date()) ? (
+                        <div
+                          className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#f4efe6] border border-[#ded6c7] text-[#736e65] text-xs font-bold shrink-0"
+                          title="This split deadline has passed and is closed for further contributions"
+                        >
+                          <span>🔒</span>
+                          <span>Closed</span>
+                        </div>
+                      ) : expense.status === "Pending Approval" ? (
+                        <div className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#fef3c7] border border-[#fde68a] text-[#92400e] text-xs font-bold shrink-0">
+                          <span>⏳</span>
+                          <span>Pending Approval</span>
                         </div>
                       ) : (
                         <button

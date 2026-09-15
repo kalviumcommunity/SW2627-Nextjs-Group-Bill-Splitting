@@ -49,6 +49,7 @@ enum OtpPurpose {
 model Expense {
   id          String        @id @default(cuid())
   creatorId   String
+  title       String?       @default("Group Split")
   totalAmount Decimal       @db.Decimal(12, 2)
   deadline    DateTime
   status      ExpenseStatus @default(ACTIVE)
