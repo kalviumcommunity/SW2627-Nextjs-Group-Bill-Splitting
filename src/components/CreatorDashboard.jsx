@@ -30,6 +30,7 @@ export default function CreatorDashboard({ initialUser = null }) {
   const [previewDoc, setPreviewDoc] = useState(null);
   const [isCheckingUser, setIsCheckingUser] = useState(false);
   const [reviewingId, setReviewingId] = useState(null);
+  const [isDeletingSplit, setIsDeletingSplit] = useState(false);
 
   // ── Deadline (simple datetime-local input) ──
   const [deadline, setDeadline] = useState(() => {
@@ -125,6 +126,11 @@ export default function CreatorDashboard({ initialUser = null }) {
       return;
     }
 
+    if (user?.email && trimmed === user.email.trim().toLowerCase()) {
+      setEmailError("You are the creator of this split and cannot add yourself as a member.");
+      return;
+    }
+
     setEmailError("");
     setIsCheckingUser(true);
 
@@ -189,6 +195,38 @@ export default function CreatorDashboard({ initialUser = null }) {
       console.warn("Review contribution error:", err);
     } finally {
       setReviewingId(null);
+    }
+  };
+
+  // Delete split helper (Permanently erases split for creator and all members)
+  const handleDeleteSplit = async (expenseId, title) => {
+    const confirmMsg = `Are you sure you want to delete "${title || "this split"}"?\n\nThis will permanently erase the split and remove it from all member accounts.`;
+    if (!window.confirm(confirmMsg)) {
+      return;
+    }
+
+    setIsDeletingSplit(true);
+    try {
+      const res = await fetch(`/api/expenses?id=${encodeURIComponent(expenseId)}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setExpenses((prev) => prev.filter((e) => e.id !== expenseId));
+        if (selectedExpense?.id === expenseId) {
+          setSelectedExpense(null);
+        }
+        setCreateSuccessMessage(`Split "${title || "Split"}" deleted successfully.`);
+        setTimeout(() => setCreateSuccessMessage(""), 4000);
+      } else {
+        alert(data.message || "Failed to delete split");
+      }
+    } catch (err) {
+      console.warn("Delete split error:", err);
+      alert("Network error deleting split");
+    } finally {
+      setIsDeletingSplit(false);
     }
   };
 
@@ -914,14 +952,43 @@ export default function CreatorDashboard({ initialUser = null }) {
                         </div>
                       </div>
 
-                      {/* Right: Total in Rupee ₹ */}
-                      <div className="text-left md:text-right md:w-1/4 shrink-0">
-                        <div className="font-serif-luxury text-2xl sm:text-3xl font-bold tracking-tight text-[#121214]">
-                          ₹{exp.totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {/* Right: Total in Rupee ₹ & Delete Action */}
+                      <div className="flex items-center justify-between md:justify-end gap-3 sm:gap-4 md:w-1/4 shrink-0">
+                        <div className="text-left md:text-right">
+                          <div className="font-serif-luxury text-2xl sm:text-3xl font-bold tracking-tight text-[#121214]">
+                            ₹{exp.totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </div>
+                          <span className="block text-[10px] uppercase tracking-wider text-[#8a8477] font-semibold mt-0.5">
+                            Total Amount
+                          </span>
                         </div>
-                        <span className="block text-[10px] uppercase tracking-wider text-[#8a8477] font-semibold mt-0.5">
-                          Total Amount
-                        </span>
+
+                        {/* Delete Symbol / Button */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteSplit(exp.id, exp.title);
+                          }}
+                          disabled={isDeletingSplit}
+                          title="Delete Split (removes for you and all members)"
+                          className="p-2.5 rounded-xl text-[#9a9386] hover:text-[#dc2626] hover:bg-[#fef2f2] border border-transparent hover:border-[#fecaca] transition-all cursor-pointer shadow-2xs group shrink-0"
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            strokeWidth={1.75}
+                            stroke="currentColor"
+                            className="w-4.5 h-4.5 group-hover:scale-110 transition-transform"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+                            />
+                          </svg>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -936,17 +1003,42 @@ export default function CreatorDashboard({ initialUser = null }) {
           {selectedExpense && (
             <div className="fixed inset-0 z-50 bg-[#f8f5ee] overflow-y-auto">
               <div className="max-w-4xl mx-auto px-6 sm:px-10 lg:px-12 py-8">
-                {/* Back Button */}
-                <button
-                  type="button"
-                  onClick={() => setSelectedExpense(null)}
-                  className="inline-flex items-center gap-2 text-sm font-semibold text-[#6c685f] hover:text-[#121214] transition-colors cursor-pointer mb-6 group"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
-                  </svg>
-                  <span>Back to Dashboard</span>
-                </button>
+                {/* Top Action Row: Back Button & Delete Split Button */}
+                <div className="flex items-center justify-between mb-6">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedExpense(null)}
+                    className="inline-flex items-center gap-2 text-sm font-semibold text-[#6c685f] hover:text-[#121214] transition-colors cursor-pointer group"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+                    </svg>
+                    <span>Back to Dashboard</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isDeletingSplit}
+                    onClick={() => handleDeleteSplit(selectedExpense.id, selectedExpense.title)}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-[#dc2626] border border-[#fecaca] bg-white hover:bg-[#fef2f2] transition-all cursor-pointer shadow-2xs hover:shadow-xs disabled:opacity-50"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      strokeWidth={1.8}
+                      stroke="currentColor"
+                      className="w-4 h-4"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+                      />
+                    </svg>
+                    <span>Delete Split</span>
+                  </button>
+                </div>
 
                 {/* Split Header */}
                 <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#dfd7c8] shadow-xs mb-6">

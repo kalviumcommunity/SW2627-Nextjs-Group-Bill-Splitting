@@ -138,21 +138,10 @@ export default function PayerDashboard({ initialUser = null }) {
     return result;
   }, [expenses, searchQuery, statusFilter, sortBy]);
 
-  // Open Payment Modal
+  // Open Split / Payment Modal
   const handleOpenPayment = (expense) => {
-    const now = new Date();
-    const isClosed =
-      expense.isClosed ||
-      expense.status === "Closed" ||
-      (expense.rawDeadline && new Date(expense.rawDeadline) <= now);
-
-    if (isClosed) {
-      showToast("This split has reached its deadline and is closed for contributions.", "error");
-      return;
-    }
-
     setActiveExpenseForPayment(expense);
-    setPaymentAmount(expense.remaining.toFixed(2));
+    setPaymentAmount(expense.remaining > 0 ? expense.remaining.toFixed(2) : "");
     setPaymentProofFile(null);
     setTransactionRef("");
     setPaymentNote("");
@@ -181,6 +170,28 @@ export default function PayerDashboard({ initialUser = null }) {
   const handleSubmitPayment = async (e) => {
     e.preventDefault();
     if (!activeExpenseForPayment) return;
+
+    const isDeadlinePassed = Boolean(
+      activeExpenseForPayment.rawDeadline &&
+      new Date(activeExpenseForPayment.rawDeadline) <= new Date()
+    );
+    const isClosed =
+      activeExpenseForPayment.isClosed ||
+      activeExpenseForPayment.status === "Closed" ||
+      isDeadlinePassed;
+
+    if (isClosed) {
+      showToast(
+        "This split deadline has passed and is closed. No further proof can be submitted.",
+        "error"
+      );
+      return;
+    }
+
+    if (activeExpenseForPayment.remaining <= 0) {
+      showToast("Your share of this split is already fully paid.", "error");
+      return;
+    }
 
     const amountNum = parseFloat(paymentAmount);
     if (isNaN(amountNum) || amountNum <= 0) {
@@ -221,6 +232,7 @@ export default function PayerDashboard({ initialUser = null }) {
     }
 
     // 2. Submit contribution to backend awaiting creator review
+    let createdContrib = null;
     try {
       const res = await fetch("/api/contributions", {
         method: "POST",
@@ -242,7 +254,9 @@ export default function PayerDashboard({ initialUser = null }) {
         showToast(data.message || "Failed to submit payment", "error");
         setIsSubmittingPayment(false);
         if (res.status === 403) {
-          handleClosePayment();
+          setActiveExpenseForPayment((prev) =>
+            prev ? { ...prev, isClosed: true, status: "Closed" } : null
+          );
           setExpenses((prev) =>
             prev.map((exp) =>
               exp.id === activeExpenseForPayment.id
@@ -253,6 +267,7 @@ export default function PayerDashboard({ initialUser = null }) {
         }
         return;
       }
+      createdContrib = data.contribution;
     } catch (err) {
       console.warn("Could not record contribution to backend:", err);
       showToast("Network error submitting payment", "error");
@@ -260,7 +275,42 @@ export default function PayerDashboard({ initialUser = null }) {
       return;
     }
 
-    // Update local state to show pending approval
+    const newContribItem = createdContrib
+      ? {
+          id: createdContrib.id,
+          amount: Number(createdContrib.amount),
+          status: createdContrib.status,
+          rejectionReason: null,
+          submittedAt: createdContrib.submittedAt,
+          paymentProof: createdContrib.paymentProof,
+        }
+      : {
+          id: `contrib_${Date.now()}`,
+          amount: amountNum,
+          status: "PENDING",
+          rejectionReason: null,
+          submittedAt: new Date().toISOString(),
+          paymentProof: uploadedFileUrl
+            ? {
+                fileName: uploadedFileName || "Receipt",
+                fileUrl: uploadedFileUrl,
+              }
+            : null,
+        };
+
+    // Update activeExpenseForPayment state so user immediately sees the contribution
+    setActiveExpenseForPayment((prev) =>
+      prev
+        ? {
+            ...prev,
+            status: "Pending Approval",
+            pendingApprovalAmount: (prev.pendingApprovalAmount || 0) + amountNum,
+            contributions: [newContribItem, ...(prev.contributions || [])],
+          }
+        : null
+    );
+
+    // Update local state in expenses array
     setExpenses((prev) =>
       prev.map((exp) => {
         if (exp.id === activeExpenseForPayment.id) {
@@ -268,6 +318,7 @@ export default function PayerDashboard({ initialUser = null }) {
             ...exp,
             status: "Pending Approval",
             pendingApprovalAmount: (exp.pendingApprovalAmount || 0) + amountNum,
+            contributions: [newContribItem, ...(exp.contributions || [])],
           };
         }
         return exp;
@@ -275,14 +326,16 @@ export default function PayerDashboard({ initialUser = null }) {
     );
 
     setIsSubmittingPayment(false);
-    handleClosePayment();
+    setPaymentAmount("");
+    setPaymentProofFile(null);
+    setTransactionRef("");
+    setPaymentNote("");
     showToast(
       `Payment & proof of ₹${amountNum.toFixed(2)} submitted for ${
         activeExpenseForPayment.title
       }. Sent to creator for review!`,
       "success"
     );
-    handleClosePayment();
   };
 
   // User Initials
@@ -878,35 +931,39 @@ export default function PayerDashboard({ initialUser = null }) {
                         </span>
                       </div>
 
-                      {/* Action Button: Settled / Closed / Pending Approval / View & Pay */}
-                      {isFullyPaid ? (
-                        <div className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-[#ecfdf5] border border-[#a7f3d0] text-[#065f46] text-xs font-bold shrink-0">
-                          <span>✓</span>
-                          <span>Settled</span>
-                        </div>
-                      ) : expense.isClosed || expense.status === "Closed" || (expense.rawDeadline && new Date(expense.rawDeadline) <= new Date()) ? (
-                        <div
-                          className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#f4efe6] border border-[#ded6c7] text-[#736e65] text-xs font-bold shrink-0"
-                          title="This split deadline has passed and is closed for further contributions"
-                        >
-                          <span>🔒</span>
-                          <span>Closed</span>
-                        </div>
-                      ) : expense.status === "Pending Approval" ? (
-                        <div className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#fef3c7] border border-[#fde68a] text-[#92400e] text-xs font-bold shrink-0">
-                          <span>⏳</span>
-                          <span>Pending Approval</span>
-                        </div>
-                      ) : (
+                      {/* Action Area: Status Pill + View Split Button */}
+                      <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+                        {isFullyPaid && (
+                          <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#ecfdf5] border border-[#a7f3d0] text-[#065f46] text-xs font-bold shrink-0">
+                            <span>✓</span>
+                            <span>Settled</span>
+                          </div>
+                        )}
+                        {!isFullyPaid && (expense.isClosed || expense.status === "Closed" || (expense.rawDeadline && new Date(expense.rawDeadline) <= new Date())) && (
+                          <div
+                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#f4efe6] border border-[#ded6c7] text-[#736e65] text-xs font-bold shrink-0"
+                            title="This split deadline has passed and is closed for further contributions"
+                          >
+                            <span>🔒</span>
+                            <span>Closed</span>
+                          </div>
+                        )}
+                        {!isFullyPaid && !(expense.isClosed || expense.status === "Closed" || (expense.rawDeadline && new Date(expense.rawDeadline) <= new Date())) && expense.status === "Pending Approval" && (
+                          <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#fef3c7] border border-[#fde68a] text-[#92400e] text-xs font-bold shrink-0">
+                            <span>⏳</span>
+                            <span>Pending</span>
+                          </div>
+                        )}
+
                         <button
                           type="button"
                           onClick={() => handleOpenPayment(expense)}
-                          className="bg-[#121214] hover:bg-black text-white text-xs sm:text-sm font-semibold px-5 sm:px-6 py-2.5 rounded-xl transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                          className="bg-[#121214] hover:bg-black text-white text-xs sm:text-sm font-semibold px-4 sm:px-5 py-2.5 rounded-xl transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
                         >
-                          <span>View &amp; Pay</span>
+                          <span>View Split</span>
                           <span className="text-xs">→</span>
                         </button>
-                      )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -917,41 +974,68 @@ export default function PayerDashboard({ initialUser = null }) {
       </main>
 
       {/* ───────────────────────────────────────────────────────────
-          3. "VIEW & PAY" MODAL (PRD Settle Contribution & Proof)
+          3. "VIEW SPLIT" MODAL (PRD Settle Contribution, Proof & History)
          ─────────────────────────────────────────────────────────── */}
-      {activeExpenseForPayment && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/45 backdrop-blur-xs animate-in fade-in duration-200">
-          <div
-            className="bg-white rounded-3xl max-w-xl w-full p-6 sm:p-8 shadow-2xl border border-[#ded6c7] max-h-[90vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className="flex items-start justify-between border-b border-[#ede4d4] pb-4 mb-6">
-              <div>
-                <span className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#faebe3] text-[#8a3d1c] mb-1">
-                  Settle Contribution
-                </span>
-                <h3 className="font-serif-luxury text-2xl sm:text-3xl font-bold text-[#121214]">
-                  {activeExpenseForPayment.title}
-                </h3>
-                <p className="text-xs text-[#736e65] mt-0.5">
-                  Assigned by {activeExpenseForPayment.creator} (
-                  {activeExpenseForPayment.creatorEmail})
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={handleClosePayment}
-                className="w-8 h-8 rounded-full bg-[#f4efe6] text-[#6c685f] hover:text-[#121214] hover:bg-[#ede6d8] flex items-center justify-center text-sm font-bold transition-colors cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
+      {activeExpenseForPayment && (() => {
+        const isModalDeadlinePassed = Boolean(
+          activeExpenseForPayment.rawDeadline &&
+          new Date(activeExpenseForPayment.rawDeadline) <= new Date()
+        );
+        const isModalClosed =
+          activeExpenseForPayment.isClosed ||
+          activeExpenseForPayment.status === "Closed" ||
+          isModalDeadlinePassed;
+        const isModalFullySettled = activeExpenseForPayment.remaining <= 0;
 
-            {/* Modal Form */}
-            <form onSubmit={handleSubmitPayment} className="space-y-6">
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/45 backdrop-blur-xs animate-in fade-in duration-200">
+            <div
+              className="bg-white rounded-3xl max-w-xl w-full p-6 sm:p-8 shadow-2xl border border-[#ded6c7] max-h-[90vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="flex items-start justify-between border-b border-[#ede4d4] pb-4 mb-6">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#faebe3] text-[#8a3d1c]">
+                      Split Details &amp; Contributions
+                    </span>
+                    {isModalClosed && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#fef2f2] text-[#991b1b] border border-[#fecaca]">
+                        🔒 Closed
+                      </span>
+                    )}
+                    {isModalFullySettled && !isModalClosed && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#ecfdf5] text-[#065f46] border border-[#a7f3d0]">
+                        ✓ Settled
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="font-serif-luxury text-2xl sm:text-3xl font-bold text-[#121214]">
+                    {activeExpenseForPayment.title}
+                  </h3>
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-[#736e65] mt-1 font-medium">
+                    <span>
+                      Assigned by {activeExpenseForPayment.creator} (
+                      {activeExpenseForPayment.creatorEmail})
+                    </span>
+                    <span>•</span>
+                    <span className={isModalDeadlinePassed ? "text-[#dc2626] font-semibold" : ""}>
+                      Due: {activeExpenseForPayment.dueDate || activeExpenseForPayment.deadline || "No Deadline"}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleClosePayment}
+                  className="w-8 h-8 rounded-full bg-[#f4efe6] text-[#6c685f] hover:text-[#121214] hover:bg-[#ede6d8] flex items-center justify-center text-sm font-bold transition-colors cursor-pointer shrink-0"
+                >
+                  ✕
+                </button>
+              </div>
+
               {/* Expense Balance Summary Pill */}
-              <div className="bg-[#fcfaf7] border border-[#ede4d4] rounded-2xl p-4 grid grid-cols-3 gap-2 text-center">
+              <div className="bg-[#fcfaf7] border border-[#ede4d4] rounded-2xl p-4 grid grid-cols-3 gap-2 text-center mb-6">
                 <div>
                   <span className="block text-[10px] uppercase tracking-wider font-semibold text-[#8a8477]">
                     Total Assigned
@@ -972,195 +1056,356 @@ export default function PayerDashboard({ initialUser = null }) {
                   <span className="block text-[10px] uppercase tracking-wider font-semibold text-[#8a3d1c]">
                     Remaining Due
                   </span>
-                  <span className="text-sm sm:text-base font-bold text-[#8a3d1c] mt-0.5 block">
+                  <span className={`text-sm sm:text-base font-bold mt-0.5 block ${isModalFullySettled ? "text-[#15803d]" : "text-[#8a3d1c]"}`}>
                     ₹{activeExpenseForPayment.remaining.toFixed(2)}
                   </span>
                 </div>
               </div>
 
-              {/* Payment Amount Input with Quick Preset Chips (₹, no spin arrows) */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-bold text-[#121214] uppercase tracking-wider">
-                    Payment Amount (₹)
-                  </label>
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPaymentAmount(
-                          activeExpenseForPayment.remaining.toFixed(2)
-                        )
-                      }
-                      className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-[#f4efe6] text-[#6c685f] hover:text-[#121214] hover:bg-[#ede6d8] transition-colors cursor-pointer"
-                    >
-                      Pay Full (₹{activeExpenseForPayment.remaining.toFixed(2)})
-                    </button>
-                    {activeExpenseForPayment.remaining > 20 && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setPaymentAmount(
-                            (activeExpenseForPayment.remaining / 2).toFixed(2)
-                          )
-                        }
-                        className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-[#f4efe6] text-[#6c685f] hover:text-[#121214] hover:bg-[#ede6d8] transition-colors cursor-pointer"
-                      >
-                        Pay Half (₹{(activeExpenseForPayment.remaining / 2).toFixed(2)})
-                      </button>
-                    )}
+              {/* Deadline Reached / Settled Banner OR Payment Proof Form */}
+              {isModalClosed ? (
+                <div className="p-4 sm:p-5 rounded-2xl bg-[#fef2f2] border border-[#fecaca] text-[#991b1b] flex items-start gap-3.5 mb-6">
+                  <span className="text-2xl shrink-0">🔒</span>
+                  <div>
+                    <h4 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#991b1b]">
+                      Deadline Reached — Split Closed
+                    </h4>
+                    <p className="text-xs sm:text-sm mt-1 text-[#b91c1c] leading-relaxed">
+                      The deadline ({activeExpenseForPayment.dueDate || activeExpenseForPayment.deadline || "Expired"}) for this split has passed. This split is closed and no further payments or proofs can be submitted.
+                    </p>
                   </div>
                 </div>
-
-                <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-[#8a8477]">
-                    ₹
-                  </span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={paymentAmount}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/[^0-9.]/g, "");
-                      const parts = val.split(".");
-                      if (parts.length > 2) return;
-                      setPaymentAmount(val);
-                    }}
-                    className="w-full pl-8 pr-4 py-2.5 text-base font-bold rounded-xl border border-[#ded6c7] focus:outline-none focus:border-[#121214] transition-all bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                    placeholder="0.00"
-                    required
-                  />
+              ) : isModalFullySettled ? (
+                <div className="p-4 sm:p-5 rounded-2xl bg-[#ecfdf5] border border-[#a7f3d0] text-[#065f46] flex items-start gap-3.5 mb-6">
+                  <span className="text-2xl shrink-0">✓</span>
+                  <div>
+                    <h4 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#065f46]">
+                      Share Fully Settled
+                    </h4>
+                    <p className="text-xs sm:text-sm mt-1 text-[#047857] leading-relaxed">
+                      You have fully paid your assigned share of ₹{activeExpenseForPayment.assigned.toFixed(2)} for this split. No further payment is needed.
+                    </p>
+                  </div>
                 </div>
-              </div>
-
-              {/* Upload Payment Proof (PRD Requirement) */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-bold text-[#121214] uppercase tracking-wider">
-                    Upload Payment Proof / Receipt
-                  </label>
-                  <span className="text-[10px] text-[#8a8477]">
-                    PNG, JPG, PDF up to 5MB
-                  </span>
-                </div>
-
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileChange}
-                  accept="image/*,.pdf"
-                  className="hidden"
-                />
-
-                {paymentProofFile ? (
-                  <div className="p-3.5 rounded-xl border border-[#bbf7d0] bg-[#f0fdf4] flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <span className="text-base">📄</span>
-                      <div>
-                        <span className="text-xs font-bold text-[#166534] block truncate max-w-[260px]">
-                          {paymentProofFile.name}
-                        </span>
-                        <span className="text-[10px] text-[#15803d]">
-                          {paymentProofFile.size} • Ready to upload
-                        </span>
+              ) : (
+                <form onSubmit={handleSubmitPayment} className="space-y-6 mb-6">
+                  {/* Payment Amount Input with Quick Preset Chips */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-bold text-[#121214] uppercase tracking-wider">
+                        Payment Amount (₹)
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPaymentAmount(
+                              activeExpenseForPayment.remaining.toFixed(2)
+                            )
+                          }
+                          className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-[#f4efe6] text-[#6c685f] hover:text-[#121214] hover:bg-[#ede6d8] transition-colors cursor-pointer"
+                        >
+                          Pay Full (₹{activeExpenseForPayment.remaining.toFixed(2)})
+                        </button>
+                        {activeExpenseForPayment.remaining > 20 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPaymentAmount(
+                                (activeExpenseForPayment.remaining / 2).toFixed(2)
+                              )
+                            }
+                            className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-[#f4efe6] text-[#6c685f] hover:text-[#121214] hover:bg-[#ede6d8] transition-colors cursor-pointer"
+                          >
+                            Pay Half (₹{(activeExpenseForPayment.remaining / 2).toFixed(2)})
+                          </button>
+                        )}
                       </div>
                     </div>
+
+                    <div className="relative">
+                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-[#8a8477]">
+                        ₹
+                      </span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={paymentAmount}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/[^0-9.]/g, "");
+                          const parts = val.split(".");
+                          if (parts.length > 2) return;
+                          setPaymentAmount(val);
+                        }}
+                        className="w-full pl-8 pr-4 py-2.5 text-base font-bold rounded-xl border border-[#ded6c7] focus:outline-none focus:border-[#121214] transition-all bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        placeholder="0.00"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  {/* Upload Payment Proof (PRD Requirement) */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-bold text-[#121214] uppercase tracking-wider">
+                        Upload Payment Proof / Receipt
+                      </label>
+                      <span className="text-[10px] text-[#8a8477]">
+                        PNG, JPG, PDF up to 5MB
+                      </span>
+                    </div>
+
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleFileChange}
+                      accept="image/*,.pdf"
+                      className="hidden"
+                    />
+
+                    {paymentProofFile ? (
+                      <div className="p-3.5 rounded-xl border border-[#bbf7d0] bg-[#f0fdf4] flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-base">📄</span>
+                          <div>
+                            <span className="text-xs font-bold text-[#166534] block truncate max-w-[260px]">
+                              {paymentProofFile.name}
+                            </span>
+                            <span className="text-[10px] text-[#15803d]">
+                              {paymentProofFile.size} • Ready to upload
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setPaymentProofFile(null)}
+                          className="text-xs text-[#dc2626] hover:underline font-semibold cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ) : (
+                      <div
+                        onClick={() => fileInputRef.current?.click()}
+                        className="border-2 border-dashed border-[#ded6c7] hover:border-[#121214] rounded-2xl p-5 text-center cursor-pointer transition-colors bg-[#fcfaf7]"
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          strokeWidth={1.5}
+                          stroke="currentColor"
+                          className="w-6 h-6 text-[#8a8477] mx-auto mb-1.5"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"
+                          />
+                        </svg>
+                        <span className="text-xs font-semibold text-[#121214] block">
+                          Click to upload receipt or screenshot
+                        </span>
+                        <span className="text-[10px] text-[#8a8477] mt-0.5 block">
+                          Recommended for fast verification by creator
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Reference ID and Note */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] uppercase tracking-wider font-semibold text-[#8a8477] mb-1">
+                        Transaction / UTR Ref # (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={transactionRef}
+                        onChange={(e) => setTransactionRef(e.target.value)}
+                        placeholder="e.g. UPI/429103810"
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-[#ded6c7] focus:outline-none focus:border-[#121214] bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase tracking-wider font-semibold text-[#8a8477] mb-1">
+                        Note for Creator (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={paymentNote}
+                        onChange={(e) => setPaymentNote(e.target.value)}
+                        placeholder="e.g. Sent via GPay"
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-[#ded6c7] focus:outline-none focus:border-[#121214] bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Submit Button */}
+                  <div className="flex items-center justify-end gap-3 pt-2">
                     <button
                       type="button"
-                      onClick={() => setPaymentProofFile(null)}
-                      className="text-xs text-[#dc2626] hover:underline font-semibold cursor-pointer"
+                      onClick={handleClosePayment}
+                      className="px-4 py-2.5 text-xs font-bold text-[#6c685f] hover:text-[#121214] transition-colors cursor-pointer"
                     >
-                      Remove
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSubmittingPayment}
+                      className="px-6 py-2.5 bg-[#121214] hover:bg-black text-white text-xs font-bold rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2"
+                    >
+                      {isSubmittingPayment ? (
+                        <>
+                          <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          <span>Recording...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>Submit Payment &amp; Proof</span>
+                          <span>🔒</span>
+                        </>
+                      )}
                     </button>
                   </div>
+                </form>
+              )}
+
+              {/* Previous Contributions Section */}
+              <div className="pt-6 border-t border-[#ede4d4]">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-[#121214]">
+                      Previous Contributions
+                    </h4>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#f4efe6] text-[#736e65]">
+                      {activeExpenseForPayment.contributions?.length || 0}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-[#8a8477]">
+                    Approval Status
+                  </span>
+                </div>
+
+                {activeExpenseForPayment.contributions && activeExpenseForPayment.contributions.length > 0 ? (
+                  <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
+                    {activeExpenseForPayment.contributions.map((contrib, idx) => {
+                      const isApproved = contrib.status === "ACCEPTED" || contrib.status === "Approved";
+                      const isPending = contrib.status === "PENDING" || contrib.status === "Pending" || contrib.status === "Pending Approval";
+                      const isRejected = contrib.status === "REJECTED" || contrib.status === "Rejected";
+
+                      const formattedDate = contrib.submittedAt
+                        ? new Date(contrib.submittedAt).toLocaleDateString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })
+                        : "Recently";
+
+                      return (
+                        <div
+                          key={contrib.id || idx}
+                          className="p-3.5 rounded-2xl bg-[#fcfaf7] border border-[#ede4d4] hover:border-[#ded6c7] transition-all"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm sm:text-base font-bold text-[#121214]">
+                                  ₹{Number(contrib.amount).toFixed(2)}
+                                </span>
+                                <span className="text-[11px] text-[#8a8477]">
+                                  • {formattedDate}
+                                </span>
+                              </div>
+
+                              {/* Proof Document Link if available */}
+                              {contrib.paymentProof?.fileUrl && (
+                                <div className="mt-1.5">
+                                  <a
+                                    href={contrib.paymentProof.fileUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#8a3d1c] hover:text-[#121214] hover:underline"
+                                    title="Open uploaded proof"
+                                  >
+                                    <span>📎</span>
+                                    <span className="truncate max-w-[200px] sm:max-w-[260px]">
+                                      {contrib.paymentProof.fileName || "View Uploaded Receipt / Proof"}
+                                    </span>
+                                    <span className="text-[10px]">↗</span>
+                                  </a>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Approval Status Badge */}
+                            <div className="shrink-0">
+                              {isApproved && (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[#ecfdf5] border border-[#a7f3d0] text-[#065f46]">
+                                  <span>✓</span>
+                                  <span>Approved</span>
+                                </span>
+                              )}
+                              {isPending && (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[#fef3c7] border border-[#fde68a] text-[#92400e]">
+                                  <span>⏳</span>
+                                  <span>Pending Approval</span>
+                                </span>
+                              )}
+                              {isRejected && (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[#fef2f2] border border-[#fecaca] text-[#991b1b]">
+                                  <span>✕</span>
+                                  <span>Rejected</span>
+                                </span>
+                              )}
+                              {!isApproved && !isPending && !isRejected && (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[#f4efe6] border border-[#ded6c7] text-[#736e65]">
+                                  {contrib.status}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Rejection Reason if rejected */}
+                          {isRejected && contrib.rejectionReason && (
+                            <div className="mt-2 text-xs text-[#991b1b] bg-[#fef2f2] px-2.5 py-1.5 rounded-xl border border-[#fecaca]">
+                              <span className="font-semibold">Reason: </span>
+                              <span>{contrib.rejectionReason}</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 ) : (
-                  <div
-                    onClick={() => fileInputRef.current?.click()}
-                    className="border-2 border-dashed border-[#ded6c7] hover:border-[#121214] rounded-2xl p-5 text-center cursor-pointer transition-colors bg-[#fcfaf7]"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      strokeWidth={1.5}
-                      stroke="currentColor"
-                      className="w-6 h-6 text-[#8a8477] mx-auto mb-1.5"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"
-                      />
-                    </svg>
-                    <span className="text-xs font-semibold text-[#121214] block">
-                      Click to upload receipt or screenshot
-                    </span>
-                    <span className="text-[10px] text-[#8a8477] mt-0.5 block">
-                      Recommended for fast verification by creator
-                    </span>
+                  <div className="text-center py-5 px-4 bg-[#fcfaf7] border border-dashed border-[#ded6c7] rounded-2xl">
+                    <span className="text-lg block mb-1">🧾</span>
+                    <p className="text-xs font-semibold text-[#736e65]">No previous contributions found</p>
+                    <p className="text-[11px] text-[#a8a196] mt-0.5">
+                      Payments and proofs you submit will appear here along with their approval status.
+                    </p>
                   </div>
                 )}
               </div>
 
-              {/* Reference ID and Note */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[10px] uppercase tracking-wider font-semibold text-[#8a8477] mb-1">
-                    Transaction / UTR Ref # (Optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={transactionRef}
-                    onChange={(e) => setTransactionRef(e.target.value)}
-                    placeholder="e.g. UPI/429103810"
-                    className="w-full px-3 py-2 text-xs rounded-xl border border-[#ded6c7] focus:outline-none focus:border-[#121214] bg-white"
-                  />
+              {/* Bottom Close Button when form is hidden */}
+              {(isModalClosed || isModalFullySettled) && (
+                <div className="flex items-center justify-end pt-5 mt-4 border-t border-[#ede4d4]">
+                  <button
+                    type="button"
+                    onClick={handleClosePayment}
+                    className="px-5 py-2.5 bg-[#121214] hover:bg-black text-white text-xs font-bold rounded-xl transition-all cursor-pointer"
+                  >
+                    Close
+                  </button>
                 </div>
-                <div>
-                  <label className="block text-[10px] uppercase tracking-wider font-semibold text-[#8a8477] mb-1">
-                    Note for Creator (Optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={paymentNote}
-                    onChange={(e) => setPaymentNote(e.target.value)}
-                    placeholder="e.g. Sent via GPay"
-                    className="w-full px-3 py-2 text-xs rounded-xl border border-[#ded6c7] focus:outline-none focus:border-[#121214] bg-white"
-                  />
-                </div>
-              </div>
-
-              {/* Modal Footer Actions */}
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#ede4d4]">
-                <button
-                  type="button"
-                  onClick={handleClosePayment}
-                  className="px-4 py-2.5 text-xs font-bold text-[#6c685f] hover:text-[#121214] transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmittingPayment}
-                  className="px-6 py-2.5 bg-[#121214] hover:bg-black text-white text-xs font-bold rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2"
-                >
-                  {isSubmittingPayment ? (
-                    <>
-                      <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      <span>Recording...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>Submit Payment &amp; Proof</span>
-                      <span>🔒</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ───────────────────────────────────────────────────────────
           4. TOAST NOTIFICATION

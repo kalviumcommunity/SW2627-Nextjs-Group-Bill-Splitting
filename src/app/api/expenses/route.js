@@ -151,6 +151,7 @@ export async function GET(request) {
             id: c.id,
             amount: Number(c.amount),
             status: c.status,
+            rejectionReason: c.rejectionReason,
             submittedAt: c.submittedAt,
             paymentProof: c.paymentProof
               ? {
@@ -354,6 +355,14 @@ export async function POST(request) {
 
       if (!user) {
         unregisteredEmails.push(m.email);
+      } else if (user.id === userId) {
+        return NextResponse.json(
+          {
+            success: false,
+            message: "You are the creator of this split and cannot add yourself as a member.",
+          },
+          { status: 400 }
+        );
       } else {
         resolvedMembers.push({
           userId: user.id,
@@ -457,6 +466,111 @@ export async function POST(request) {
     console.error("POST /api/expenses error:", error);
     return NextResponse.json(
       { success: false, message: "Unable to create split" },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * DELETE /api/expenses?id=<expenseId>
+ * Deletes an expense and cascades the deletion across all member allocations,
+ * contributions, payment proofs, and shortfalls, completely removing it from
+ * the creator's and all members' accounts.
+ */
+export async function DELETE(request) {
+  try {
+    const cookieStore = await cookies();
+    const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME);
+    const userId = verifySessionValue(sessionCookie?.value);
+
+    if (!userId) {
+      return NextResponse.json(
+        { success: false, message: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    const { searchParams } = new URL(request.url);
+    const expenseId = searchParams.get("id");
+
+    if (!expenseId) {
+      return NextResponse.json(
+        { success: false, message: "Expense ID is required" },
+        { status: 400 }
+      );
+    }
+
+    // Verify the split exists and the current user is the creator
+    const expense = await prisma.expense.findUnique({
+      where: { id: expenseId },
+      include: {
+        members: {
+          include: {
+            contributions: true,
+          },
+        },
+      },
+    });
+
+    if (!expense) {
+      return NextResponse.json(
+        { success: false, message: "Expense not found" },
+        { status: 404 }
+      );
+    }
+
+    if (expense.creatorId !== userId) {
+      return NextResponse.json(
+        { success: false, message: "Only the creator of this split can delete it" },
+        { status: 403 }
+      );
+    }
+
+    const memberIds = expense.members.map((m) => m.id);
+    const contributionIds = expense.members.flatMap((m) =>
+      m.contributions.map((c) => c.id)
+    );
+
+    // Delete in order to satisfy foreign key constraints
+    await prisma.$transaction(async (tx) => {
+      // 1. Delete payment proofs for all member contributions
+      if (contributionIds.length > 0) {
+        await tx.paymentProof.deleteMany({
+          where: { contributionId: { in: contributionIds } },
+        });
+
+        // 2. Delete all contributions
+        await tx.contribution.deleteMany({
+          where: { id: { in: contributionIds } },
+        });
+      }
+
+      // 3. Delete shortfalls if any
+      await tx.shortfall.deleteMany({
+        where: { expenseId },
+      });
+
+      // 4. Delete all expense members (erases the split from members' accounts)
+      if (memberIds.length > 0) {
+        await tx.expenseMember.deleteMany({
+          where: { id: { in: memberIds } },
+        });
+      }
+
+      // 5. Delete the expense itself
+      await tx.expense.delete({
+        where: { id: expenseId },
+      });
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: "Split and all member accounts updated successfully",
+    });
+  } catch (error) {
+    console.error("DELETE /api/expenses error:", error);
+    return NextResponse.json(
+      { success: false, message: "Unable to delete split" },
       { status: 500 }
     );
   }

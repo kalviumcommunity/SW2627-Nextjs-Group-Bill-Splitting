@@ -147,8 +147,8 @@ export async function GET() {
         id: `rcv_${c.id}`,
         type: "payment_received",
         title: `Payment received from ${memberName}`,
-        subtitle: `Expense #${c.expenseMember?.expenseId?.slice(-6) || "Split"} • ${new Date(c.submittedAt).toLocaleDateString()}`,
-        amount: `+$${Number(c.amount).toFixed(2)}`,
+        subtitle: `${c.expenseMember?.expense?.title || "Group Split"} • ${new Date(c.submittedAt).toLocaleDateString()}`,
+        amount: `+₹${Number(c.amount).toFixed(2)}`,
         amountType: "positive",
         status: statusLabel,
         statusBadge: statusLabel,
@@ -170,8 +170,8 @@ export async function GET() {
         id: `paid_${c.id}`,
         type: "payment_settled",
         title: `Contribution to ${creatorName}`,
-        subtitle: `Expense #${c.expenseMember?.expenseId?.slice(-6) || "Split"} • ${new Date(c.submittedAt).toLocaleDateString()}`,
-        amount: `-$${Number(c.amount).toFixed(2)}`,
+        subtitle: `${c.expenseMember?.expense?.title || "Group Split"} • ${new Date(c.submittedAt).toLocaleDateString()}`,
+        amount: `-₹${Number(c.amount).toFixed(2)}`,
         amountType: "negative",
         status: statusLabel,
         statusBadge: statusLabel,
@@ -186,7 +186,7 @@ export async function GET() {
         id: `split_${s.id}`,
         type: "split_created",
         title: "New Split created",
-        subtitle: `Total $${Number(s.totalAmount).toFixed(2)} • ${new Date(s.createdAt).toLocaleDateString()}`,
+        subtitle: `Total ₹${Number(s.totalAmount).toFixed(2)} • ${new Date(s.createdAt).toLocaleDateString()}`,
         amount: null,
         status: s.status,
         statusBadge: s.status === "ACTIVE" ? "Active" : "Closed",
@@ -201,13 +201,13 @@ export async function GET() {
 
     const formattedPending =
       totalPendingCollection >= 1000
-        ? `$${(totalPendingCollection / 1000).toFixed(1)}k`
-        : `$${Math.round(totalPendingCollection)}`;
+        ? `₹${(totalPendingCollection / 1000).toFixed(1)}k`
+        : `₹${Math.round(totalPendingCollection)}`;
 
     const formattedTotalDue =
       totalDue >= 1000
-        ? `$${(totalDue / 1000).toFixed(1)}k`
-        : `$${Math.round(totalDue)}`;
+        ? `₹${(totalDue / 1000).toFixed(1)}k`
+        : `₹${Math.round(totalDue)}`;
 
     return NextResponse.json({
       success: true,

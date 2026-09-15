@@ -21,11 +21,11 @@ export default function HomeDashboard({ initialUser = null }) {
   const [stats, setStats] = useState({
     creator: {
       active: 0,
-      pendingAmount: "$0",
+      pendingAmount: "₹0",
     },
     payer: {
       dueCount: 0,
-      totalDue: "$0",
+      totalDue: "₹0",
     },
   });
 
